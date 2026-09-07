@@ -1,0 +1,10 @@
+node_modules
+.git
+.auth
+output
+data
+.env
+*.log
+Dockerfile
+docker-compose.yml
+README.md

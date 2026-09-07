@@ -1,0 +1,57 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: linkedin-scrapper-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: linkedin-scrapper-app
+    ports:
+      - "6363:6363"
+      - "6080:6080"
+    shm_size: "2gb"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      PORT: "6363"
+      MONGODB_URI: mongodb://mongo:27017
+      MONGODB_DB: linkedin_scrapper
+      HEADLESS: "false"
+      IN_DOCKER: "true"
+      DISPLAY: ":99"
+      ACTION_DELAY_MS: "3000"
+      AI_MESSAGES: "true"
+      RAG_TTL_MS: "86400000"
+      RAG_TOP_K: "4"
+      RAG_MIN_SCORE: "60"
+      SEND_MESSAGES: "false"
+    volumes:
+      - app_auth:/app/.auth
+      - app_output:/app/output
+      - app_data:/app/data
+      - ./knowledge:/app/knowledge
+    depends_on:
+      mongo:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  app_auth:
+  app_output:
+  app_data:
