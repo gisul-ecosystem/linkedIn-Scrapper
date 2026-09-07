@@ -566,6 +566,7 @@ async function main() {
   try {
     await db.connectMongo();
     await db.users.upsertUser({ userId: USER_ID, name: 'Local operator' });
+    db.startAtlasBackup();
   } catch (err) {
     console.warn(`[mongo] Could not connect on startup: ${err.message}`);
     console.warn('[mongo] Start MongoDB (docker compose up -d mongo) then restart npm start');

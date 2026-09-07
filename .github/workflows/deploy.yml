@@ -1,0 +1,128 @@
+# Build the app image, push to Docker Hub, then deploy to the Linux VM.
+#
+# GitHub secrets (Settings → Secrets and variables → Actions):
+#   VM_IP                — server IP / hostname
+#   VM_PASSWORD          — root SSH password
+#   DOCKERHUB_USERNAME   — Docker Hub user
+#   DOCKERHUB_TOKEN      — Docker Hub access token
+#
+# VM layout (kept as-is, never overwritten except compose + knowledge):
+#   /opt/scrapper/.env
+#   /opt/scrapper/docker-compose.yml
+
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: write
+
+env:
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/linkedin-scrapper
+
+jobs:
+  build:
+    name: Build and push
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Image tags
+        id: meta
+        run: |
+          echo "image=${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "latest=${IMAGE_NAME}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ steps.meta.outputs.image }}
+            ${{ steps.meta.outputs.latest }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VM
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Ensure /opt/scrapper exists
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_IP }}
+          username: root
+          password: ${{ secrets.VM_PASSWORD }}
+          timeout: 60s
+          script: mkdir -p /opt/scrapper /opt/scrapper/knowledge
+
+      - name: Copy compose and knowledge
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.VM_IP }}
+          username: root
+          password: ${{ secrets.VM_PASSWORD }}
+          source: "docker-compose.yml,knowledge"
+          target: /opt/scrapper
+          overwrite: true
+
+      - name: Pull image and restart
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VM_IP }}
+          username: root
+          password: ${{ secrets.VM_PASSWORD }}
+          timeout: 60s
+          command_timeout: 20m
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,DOCKER_IMAGE
+          script: |
+            set -euo pipefail
+            cd /opt/scrapper
+
+            if [ ! -f .env ]; then
+              echo "Missing /opt/scrapper/.env — create it on the VM first"
+              exit 1
+            fi
+
+            echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+
+            if grep -q '^DOCKER_IMAGE=' .env; then
+              sed -i "s|^DOCKER_IMAGE=.*|DOCKER_IMAGE=${DOCKER_IMAGE}|" .env
+            else
+              printf '\nDOCKER_IMAGE=%s\n' "${DOCKER_IMAGE}" >> .env
+            fi
+
+            docker compose pull app
+            docker compose up -d --no-build --remove-orphans
+            docker compose ps
+            docker image prune -f
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKER_IMAGE: ${{ needs.build.outputs.image }}

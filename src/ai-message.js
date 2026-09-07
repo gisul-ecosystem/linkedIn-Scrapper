@@ -8,7 +8,13 @@ const {
 const { getProduct, listProducts, parseProductIds } = require('./products');
 const { firstName } = require('./utils');
 const { retrieveForProfile } = require('./rag/index');
-const { sanitizeHeadline, shortRolePhrase } = require('./profile');
+const {
+  sanitizeHeadline,
+  shortRolePhrase,
+  cleanCompanyName,
+  cleanRoleTitle,
+  companyFromAtPhrase,
+} = require('./profile');
 
 const BANNED_PHRASE_RE =
   /i hope you(?:'re| are) doing (?:great|well)|i(?:'m| am) reaching out because|reaching out to explore|i came across|noticed your profile|i noticed|would love to|i wanted to|we are a leading provider|exciting opportunity|synergies|potential alignment|your work stands out|caught my attention|customised upskilling programs|customized upskilling programs/i;
@@ -37,6 +43,21 @@ function detectGeography(profile) {
     return 'india';
   }
   return 'unknown';
+}
+
+function gisulComboLine(ids) {
+  const set = new Set(ids);
+  if (set.has('kanonkode') && set.has('aaptor')) {
+    return 'Gisul runs both: KanonKode for enterprise upskilling and Aaptor for AI assessments — standalone or as one system.';
+  }
+  if (set.has('racko') && set.has('kanonkode')) {
+    return 'Gisul runs both: Racko for private cloud infrastructure and KanonKode for enterprise upskilling — standalone or as one system.';
+  }
+  if (set.has('racko') && set.has('aaptor')) {
+    return 'Gisul runs both: Racko for private cloud infrastructure and Aaptor for AI assessments — standalone or as one system.';
+  }
+  const names = ids.map((id) => getProduct(id)?.name || id);
+  return `Gisul runs both: ${names.join(' and ')} — standalone or as one system.`;
 }
 
 function proofFor(productId, geo) {
@@ -87,8 +108,14 @@ function buildFallbackMessage(profile, productId, { relevant = true, reason } = 
 
   const product = getProduct(productId) || listProducts()[0];
   const name = firstName(profile.name) || 'there';
-  const company = (profile.company || '').trim() || 'your organisation';
-  const role = shortRolePhrase(profile);
+  const company =
+    cleanCompanyName(profile.company || '') ||
+    companyFromAtPhrase(profile.jobTitle || profile.headline || '') ||
+    'your organisation';
+  const role = shortRolePhrase({
+    ...profile,
+    company: company === 'your organisation' ? '' : company,
+  });
   const geo = detectGeography(profile);
   const ids = product.productIds || parseProductIds(product.id);
   const primary = ids[0] || product.id;
@@ -108,10 +135,12 @@ Worth a conversation?
 
 ${signOff(profile)}`;
   } else if (ids.length === 2) {
-    const [a, b] = ids.map((id) => getProduct(id)?.name || id);
-    body = `Hi ${name}, at ${company}'s scale — ${role} usually means more than one system that should reinforce each other.
+    const opener = role
+      ? `Hi ${name}, at ${company}'s scale — ${role} usually means more than one system that should reinforce each other.`
+      : `Hi ${name}, at ${company}'s scale, more than one system should typically reinforce each other.`;
+    body = `${opener}
 
-${a} and ${b} work standalone or integrated. ${proof} are already running this combination.
+${gisulComboLine(ids)} ${proof} are already running this combination.
 
 Happy to share how it's structured. Interested?
 
@@ -162,12 +191,20 @@ ${signOff(profile)}`;
 
 function cleanProfileForAi(profile) {
   const headline = sanitizeHeadline(profile.headline || '', profile.name);
+  const company =
+    cleanCompanyName(profile.company || '') ||
+    companyFromAtPhrase(profile.jobTitle || headline) ||
+    '';
   const jobTitle =
-    sanitizeHeadline(profile.jobTitle || '', profile.name) || headline.split('|')[0].trim();
+    cleanRoleTitle(profile.jobTitle || headline.split('|')[0] || '', {
+      name: profile.name,
+      company,
+    }) || headline.split('|')[0].trim();
   return {
     ...profile,
     headline,
     jobTitle,
+    company,
   };
 }
 
@@ -294,10 +331,11 @@ If proceed=false / NO FIT: relevant=false, message="", productId=null.
 ## MESSAGE RULES (proceed=true only)
 - Under 120 words. Cut context before cutting CTA.
 - Already 1st connections — do NOT re-introduce or mention the connection.
-- Open with something specific from profile (sector, company scale, role, initiative). Sparse profile → industry + role + company size.
-- Single brand: one product, one geo/sector proof point, one pain.
-- Combined: one shared problem, two tools — not two pitches back-to-back.
-- Ecosystem: one integrated system — not three products listed separately.
+- Open with a clean company name + short role (e.g. L&D Manager). Never paste raw headline, education, or duplicated employer text (SynechronSynechron, "Jain (Deemed-to-be Univ").
+- Sparse profile → industry + role + company size. If company is missing, say "your organisation".
+- Single brand: one product, one geo/sector proof point, one pain. Frame as Gisul's platform (e.g. "KanonKode is Gisul's enterprise upskilling…").
+- Combined (two products): one shared problem. Lead with Gisul as the parent, then the two platforms — e.g. "Gisul runs both: KanonKode for enterprise upskilling and Aaptor for AI assessments — standalone or as one system." Never present two products as unrelated brands.
+- Ecosystem: Gisul's integrated stack — not three products listed as separate companies.
 - NEVER ask for a call in the first message. End with low-friction question or "happy to share more."
 - C-suite / VP+: sign off "— Sahil Goyal | CEO, Gisul"
 - Others: "— Sahil, Gisul"
@@ -305,7 +343,7 @@ If proceed=false / NO FIT: relevant=false, message="", productId=null.
 - Peer-to-peer, informed, direct. Not salesy.
 
 ## NEVER WRITE
-"I hope you are doing great/well", "I'm reaching out because/from", "I came across/noticed your profile", "Would love to/I wanted to", "We are a leading provider of", "Exciting opportunity/synergies/potential alignment", "Your work stands out/caught my attention", "Customised upskilling programs", "Reaching out to explore", "I noticed".`;
+"I hope you are doing great/well", "I'm reaching out because/from", "I came across/noticed your profile", "Would love to/I wanted to", "We are a leading provider of", "Exciting opportunity/synergies/potential alignment", "Your work stands out/caught my attention", "Customised upskilling programs", "Reaching out to explore", "I noticed", duplicated company names, university/education fragments in the opener.`;
 }
 
 function userPrompt(profile, rag) {

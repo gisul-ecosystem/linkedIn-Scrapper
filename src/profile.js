@@ -98,10 +98,94 @@ function extractHeadlineFromTopCard(topCardText, name) {
   return t.slice(0, 220);
 }
 
+const EDU_LEAK_RE =
+  /\b(Deemed(?:-to-be)?(?:\s+University)?|University|Univ\.?|College|Institute of|School of|Bachelor|Master(?:'?s)?|MBA|B\.Tech|B\.E\.|M\.Tech|Ph\.?D|Alumni)\b/i;
+
+const JOB_TYPE_RE = /^(full-?time|part-?time|contract|internship|self-employed|freelance|permanent)$/i;
+
+/** LinkedIn concatenates visible + aria-hidden text: SynechronSynechron, or "Synechron Synechron". */
+function collapseStutter(s) {
+  let t = String(s || '');
+  t = t.replace(/([A-Z][A-Za-z0-9&'’.-]{2,})\1/g, '$1');
+  t = t.replace(/\b([A-Za-z][A-Za-z0-9&'’.-]{2,})\s+\1\b/g, '$1');
+  return t;
+}
+
+function stripEducationLeak(s) {
+  let t = String(s || '');
+  const cut = t.search(EDU_LEAK_RE);
+  if (cut > 12) t = t.slice(0, cut);
+  // leftover " Jain (" after cutting Deemed-to-be University
+  t = t.replace(/\s+[A-Z][A-Za-z]{2,24}\s*\([^)]*$/g, '');
+  t = t.replace(/\s*\([^)]*$/g, '');
+  t = t.replace(/[(\[{,;:\-–—|·]+\s*$/g, '').trim();
+  return t;
+}
+
+function looksLikeDirtyField(s) {
+  const t = String(s || '');
+  return (
+    !t ||
+    EDU_LEAK_RE.test(t) ||
+    /([A-Z][A-Za-z0-9&'’.-]{2,})\1/.test(t) ||
+    t.length > 72
+  );
+}
+
+function isShortRoleAcronym(s) {
+  return /^(CEO|CTO|CIO|COO|CFO|CHRO|CLO|CPO|CISO|CRO|CMO|VP|SVP|EVP|MD|HR|TA|L&D|CXO)$/i.test(
+    String(s || '').trim()
+  );
+}
+
+function cleanCompanyName(raw) {
+  let t = collapseStutter(String(raw || '').replace(/\s+/g, ' ').trim());
+  if (!t) return '';
+  t = t.split(/\s*[·|•]\s*/).filter(Boolean)[0] || t;
+  if (JOB_TYPE_RE.test(t)) return '';
+  t = t.replace(/\b(full-?time|part-?time|contract|internship|self-employed)\b.*$/i, '').trim();
+  t = stripEducationLeak(t);
+  t = t.replace(/\s*\([^)]*$/g, '').replace(/[(\[{,;:\-–—|·]+\s*$/g, '').trim();
+  if (!t || t.length < 2 || EDU_LEAK_RE.test(t)) return '';
+  return t.slice(0, 60);
+}
+
+/** "Manager at Synechron…" → Synechron when the company field was empty or mashed. */
+function companyFromAtPhrase(raw) {
+  const t = stripEducationLeak(collapseStutter(String(raw || '').replace(/\s+/g, ' ').trim()));
+  const m = t.match(/\sat\s+([A-Z][A-Za-z0-9&'’.\- ]{1,50})$/);
+  if (!m) return '';
+  return cleanCompanyName(m[1]);
+}
+
+function cleanRoleTitle(raw, { name = '', company = '' } = {}) {
+  let t = sanitizeHeadline(raw, name);
+  t = collapseStutter(t);
+  t = stripEducationLeak(t);
+  const at = t.match(/^(.*?)\s+at\s+(.+)$/i);
+  if (at && at[1].trim().length >= 6) t = at[1].trim();
+  if (company) {
+    const escaped = company.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    t = t.replace(new RegExp(`\\s*(?:at\\s+)?${escaped}\\s*$`, 'i'), '').trim();
+    t = t.replace(new RegExp(`\\b${escaped}\\b`, 'ig'), ' ').replace(/\s+/g, ' ').trim();
+  }
+  t = t.split('|')[0].trim();
+  t = t.replace(/[(\[{,;:\-–—|·]+\s*$/g, '').trim();
+  if (isShortRoleAcronym(t)) return t;
+  if (t.length < 4 || looksLikeDirtyField(t)) {
+    const first = t.split(/\s[-–—]\s/)[0].trim();
+    if (isShortRoleAcronym(first)) return first;
+    if (first.length >= 4 && first.length <= 50 && !looksLikeDirtyField(first)) return first;
+    return '';
+  }
+  return t.slice(0, 70);
+}
+
 /** Keep only the professional headline — strip UI leftovers. */
 function sanitizeHeadline(headline, name = '') {
   let t = String(headline || '').replace(/\s+/g, ' ').trim();
   if (!t) return '';
+  t = collapseStutter(t);
   if (name) {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     t = t.replace(new RegExp(`^${escaped}[\\s·•|-]*`, 'i'), '');
@@ -115,16 +199,19 @@ function sanitizeHeadline(headline, name = '') {
     const before = whole.slice(0, offset).trim();
     return before.length >= 20 ? '' : m;
   });
+  t = stripEducationLeak(t);
   t = t.replace(/[|·•]\s*$/g, '').replace(/\s+/g, ' ').trim();
   return t.slice(0, 180);
 }
 
-/** Short role phrase for messages — never dump full scraped blob. */
+/** Short role phrase for messages — title only, never company or education. */
 function shortRolePhrase(profile) {
-  const raw = sanitizeHeadline(profile.jobTitle || profile.headline || '', profile.name);
-  if (!raw) return 'your work';
-  const first = raw.split('|')[0].trim();
-  return first.slice(0, 80) || 'your work';
+  const company = cleanCompanyName(profile.company || '');
+  const role = cleanRoleTitle(profile.jobTitle || profile.headline || '', {
+    name: profile.name,
+    company,
+  });
+  return role || '';
 }
 
 /**
@@ -394,7 +481,12 @@ async function scrapeProfile(page, profileUrl) {
       const first = experience.split('\n')[0] || '';
       const parts = first.split(/\s*[·|]\s*/).map((p) => p.trim()).filter(Boolean);
       jobTitle = parts[0] || '';
-      company = parts[1] || '';
+      company =
+        parts.find(
+          (p, i) =>
+            i > 0 &&
+            !/^(full-?time|part-?time|contract|internship|self-employed|freelance|\d)/i.test(p)
+        ) || '';
     }
 
     const education = sectionText(sectionByHeading('Education'), 4);
@@ -440,12 +532,15 @@ async function scrapeProfile(page, profileUrl) {
   let about = data.about || '';
   let experience = data.experience || '';
   const education = data.education || '';
-  let jobTitle = sanitizeHeadline(data.jobTitle || '', name);
-  let company = data.company || '';
+  let company =
+    cleanCompanyName(data.company || '') ||
+    companyFromAtPhrase(data.jobTitle || '') ||
+    companyFromAtPhrase(headline);
+  let jobTitle = cleanRoleTitle(data.jobTitle || '', { name, company });
   const location = data.location || '';
 
   if (!jobTitle && headline) {
-    jobTitle = headline.split('|')[0].trim().slice(0, 100);
+    jobTitle = cleanRoleTitle(headline.split('|')[0], { name, company }) || headline.split('|')[0].trim().slice(0, 70);
   }
 
   console.log(`[profile] ——— ${slug} ———`);
@@ -498,4 +593,8 @@ module.exports = {
   sanitizeHeadline,
   shortRolePhrase,
   extractHeadlineFromTopCard,
+  collapseStutter,
+  cleanCompanyName,
+  cleanRoleTitle,
+  companyFromAtPhrase,
 };

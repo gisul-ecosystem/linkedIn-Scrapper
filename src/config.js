@@ -35,6 +35,10 @@ const RAG_TOP_K = Math.max(1, Number(process.env.RAG_TOP_K || 4));
 const RAG_MIN_SCORE = Math.max(0, Number(process.env.RAG_MIN_SCORE || 60));
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'linkedin_scrapper';
+const MONGODB_ATLAS_URI =
+  process.env.MONGODB_ATLAS_URI ||
+  'mongodb+srv://nishankulal_db_user:HDxylDHR3xggDphs@cluster0.jhtlrhc.mongodb.net/?appName=Cluster0';
+const ATLAS_BACKUP_MS = Math.max(60_000, Number(process.env.ATLAS_BACKUP_MS || 60 * 60 * 1000));
 
 // LinkedIn outbound pacing
 const DAILY_SEND_LIMIT = Math.max(1, Number(process.env.DAILY_SEND_LIMIT || 60));
@@ -74,6 +78,8 @@ module.exports = {
   RAG_MIN_SCORE,
   MONGODB_URI,
   MONGODB_DB,
+  MONGODB_ATLAS_URI,
+  ATLAS_BACKUP_MS,
   DAILY_SEND_LIMIT,
   SEND_BATCH_SIZE,
   SEND_BATCH_PAUSE_MS,

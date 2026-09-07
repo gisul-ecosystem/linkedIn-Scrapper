@@ -14,6 +14,7 @@ services:
       retries: 10
 
   app:
+    image: ${DOCKER_IMAGE:-linkedin-scrapper:local}
     build: .
     container_name: linkedin-scrapper-app
     ports:
