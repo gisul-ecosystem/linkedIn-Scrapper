@@ -4,20 +4,65 @@ const fs = require('fs');
 const http = require('http');
 const path = require('path');
 const express = require('express');
-const { ROOT, PORT, MONGODB_URI, MONGODB_DB } = require('./config');
+const { ROOT, PORT, MONGODB_URI, MONGODB_DB, OPENAI_API_KEY, ANTHROPIC_API_KEY, SEND_DAY_TZ, OUT_DIR } = require('./config');
 const { CONNECTION_TYPES, buildSearchUrl, resolveConnectionType } = require('./search');
 const { runScrapeJob, getJobStatus } = require('./scrape-job');
 const { runSendQueueJob, getSendJobStatus } = require('./send-queue-job');
-const { startLinkedInConnect, getLinkedInJob, hasLinkedInSession } = require('./linkedin-login-job');
+const { startLinkedInConnect, getLinkedInJob, hasLinkedInSession, logoutLinkedIn, rescueLinkedInBrowser } = require('./linkedin-login-job');
 const { listProducts } = require('./products');
 const { userPaths } = require('./paths');
-const { OPENAI_API_KEY, ANTHROPIC_API_KEY } = require('./config');
 const { getRagStatus, buildIndex } = require('./rag/index');
+const { getSendBudget } = require('./send-limits');
+const { writeDailySendReportExcel } = require('./export');
+const { ensureDirs } = require('./utils');
 const db = require('./db');
 
 const USER_ID = 'local';
 const NOVNC_UPSTREAM = { hostname: '127.0.0.1', port: 6080 };
-const BROWSER_VIEWER_PATH = '/vnc/vnc_lite.html?autoconnect=1&resize=scale';
+const BROWSER_VIEWER_PATH = '/vnc/vnc_lite.html?autoconnect=1&scale=true';
+
+// Older Ubuntu noVNC uses scale=true (NOT resize=scale). Never CSS-scale the canvas.
+const NOVNC_FIT_CSS = `
+<style id="gisul-novnc-fit">
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    overflow: hidden !important;
+    background: #111 !important;
+  }
+  #noVNC_status_bar {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
+  }
+</style>
+<script>
+  window.addEventListener('load', function () {
+    function hideBar() {
+      var bar = document.getElementById('noVNC_status_bar');
+      if (bar) {
+        bar.style.display = 'none';
+        bar.style.height = '0';
+        bar.style.pointerEvents = 'none';
+      }
+      try {
+        if (window.rfb) {
+          window.rfb.scaleViewport = true;
+        }
+      } catch (e) {}
+      window.dispatchEvent(new Event('resize'));
+    }
+    hideBar();
+    setTimeout(hideBar, 400);
+    setTimeout(hideBar, 1200);
+  });
+</script>
+`;
 
 const app = express();
 app.use(express.json());
@@ -25,7 +70,14 @@ app.use(express.static(path.join(ROOT, 'public')));
 
 /** Same-origin proxy so the VNC iframe works reliably (avoids broken cross-port embeds). */
 app.use('/vnc', (req, res) => {
-  const targetPath = !req.url || req.url === '/' ? '/vnc_lite.html?autoconnect=1&resize=scale' : req.url;
+  const fallback = `/vnc_lite.html?autoconnect=1&scale=true`;
+  let targetPath = !req.url || req.url === '/' ? fallback : req.url;
+
+  // Normalize legacy resize=scale → scale=true for this noVNC build
+  if (/resize=scale/i.test(targetPath) && !/[?&]scale=/i.test(targetPath)) {
+    targetPath += (targetPath.includes('?') ? '&' : '?') + 'scale=true';
+  }
+
   const proxyReq = http.request(
     {
       ...NOVNC_UPSTREAM,
@@ -34,11 +86,45 @@ app.use('/vnc', (req, res) => {
       headers: {
         ...req.headers,
         host: `${NOVNC_UPSTREAM.hostname}:${NOVNC_UPSTREAM.port}`,
+        // Avoid gzip so we can inject click-fix CSS into HTML
+        'accept-encoding': 'identity',
       },
     },
     (proxyRes) => {
-      res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
-      proxyRes.pipe(res);
+      const contentType = String(proxyRes.headers['content-type'] || '');
+      const isHtml = contentType.includes('text/html') || /\.html(?:\?|$)/i.test(targetPath);
+
+      if (!isHtml) {
+        res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+        proxyRes.pipe(res);
+        return;
+      }
+
+      const chunks = [];
+      proxyRes.on('data', (c) => chunks.push(c));
+      proxyRes.on('end', () => {
+        let body = Buffer.concat(chunks).toString('utf8');
+        if (body.includes('</head>')) {
+          body = body.replace('</head>', `${NOVNC_FIT_CSS}</head>`);
+        } else if (body.includes('<body>')) {
+          body = body.replace('<body>', `<body>${NOVNC_FIT_CSS}`);
+        } else {
+          body = NOVNC_FIT_CSS + body;
+        }
+        // Expose rfb on window for scale force
+        body = body.replace(
+          /rfb = new RFB\(/,
+          'rfb = window.rfb = new RFB('
+        );
+        const headers = { ...proxyRes.headers };
+        delete headers['content-length'];
+        delete headers['Content-Length'];
+        delete headers['content-encoding'];
+        delete headers['Content-Encoding'];
+        headers['content-type'] = 'text/html; charset=utf-8';
+        res.writeHead(proxyRes.statusCode || 200, headers);
+        res.end(body);
+      });
     }
   );
   proxyReq.on('error', (err) => {
@@ -48,7 +134,7 @@ app.use('/vnc', (req, res) => {
         .type('html')
         .send(
           `<h1>Browser viewer unavailable</h1><p>${err.message}</p>` +
-            `<p><a href="http://localhost:6080/vnc_lite.html?autoconnect=1&resize=scale">Open direct VNC</a></p>`
+            `<p><a href="http://localhost:6080/vnc_lite.html?autoconnect=1&scale=true">Open direct VNC</a></p>`
         );
     } else {
       res.end();
@@ -137,11 +223,19 @@ app.get('/api/status', async (_req, res) => {
       console.warn('[mongo]', err.message);
     }
 
+    let sendBudget = null;
+    try {
+      sendBudget = await getSendBudget(USER_ID);
+    } catch {
+      sendBudget = null;
+    }
+
     res.json({
       linkedInConnected,
       linkedInJob: getLinkedInJob(USER_ID),
       scrapeJob: getJobStatus(USER_ID),
       sendJob: getSendJobStatus(USER_ID),
+      sendBudget,
       totalProfiles,
       queueCount,
       user,
@@ -160,6 +254,42 @@ app.post('/api/linkedin/connect', async (_req, res) => {
     await db.users.upsertUser({ userId: USER_ID, name: 'Local operator' });
     const job = await startLinkedInConnect(USER_ID);
     res.json({ ok: true, job });
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+app.post('/api/linkedin/logout', async (_req, res) => {
+  try {
+    const scrape = getJobStatus(USER_ID);
+    const send = getSendJobStatus(USER_ID);
+    if (scrape?.status === 'running' || send?.status === 'running') {
+      return res.status(409).json({ error: 'Stop the running scrape/send job before logging out' });
+    }
+    const result = await logoutLinkedIn(USER_ID);
+    res.json({
+      ok: true,
+      linkedInConnected: false,
+      cleared: result.cleared,
+      message: result.cleared
+        ? 'LinkedIn session removed. Connect again to sign in.'
+        : 'No saved session found. Already logged out.',
+    });
+  } catch (err) {
+    res.status(409).json({ error: err.message });
+  }
+});
+
+app.post('/api/linkedin/back', async (_req, res) => {
+  try {
+    const result = await rescueLinkedInBrowser(USER_ID);
+    res.json({
+      ok: true,
+      ...result,
+      message: result.loggedIn
+        ? 'Opened LinkedIn feed — you are signed in.'
+        : 'Opened LinkedIn login — use email + password (not Google).',
+    });
   } catch (err) {
     res.status(409).json({ error: err.message });
   }
@@ -267,6 +397,19 @@ app.post('/api/queue/skip', async (req, res) => {
   }
 });
 
+app.post('/api/queue/clear', async (_req, res) => {
+  try {
+    if (getSendJobStatus(USER_ID).status === 'running') {
+      return res.status(409).json({ error: 'Send job is running — wait until it finishes' });
+    }
+    await db.connectMongo();
+    const cleared = await db.profiles.clearQueue(USER_ID);
+    res.json({ ok: true, cleared, message: `Cleared ${cleared} queued draft(s)` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/queue/send', async (req, res) => {
   if (getSendJobStatus(USER_ID).status === 'running') {
     return res.status(409).json({ error: 'Send job already running' });
@@ -304,6 +447,56 @@ app.get('/api/results/download', async (_req, res) => {
     return res.status(404).json({ error: 'No export yet. Run a search first.' });
   }
   res.download(paths.excel, 'connections.xlsx');
+});
+
+app.get('/api/reports/daily-sends', async (req, res) => {
+  try {
+    await db.connectMongo();
+    const budget = await getSendBudget(USER_ID);
+    const date = String(req.query.date || budget.date || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return res.status(400).json({ error: 'Use date=YYYY-MM-DD' });
+    }
+
+    const sent = await db.profiles.listSentOnDate(USER_ID, date, SEND_DAY_TZ);
+    ensureDirs(OUT_DIR);
+    const filePath = path.join(OUT_DIR, `daily-sends-${date}.xlsx`);
+    await writeDailySendReportExcel(sent, filePath, {
+      date,
+      timeZone: SEND_DAY_TZ,
+      ownerId: USER_ID,
+      dailyLimit: budget.limit,
+      dailySentCounter: budget.date === date ? budget.sent : sent.length,
+    });
+
+    return res.download(filePath, `daily-sends-${date}.xlsx`);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/reports/daily-sends/summary', async (req, res) => {
+  try {
+    await db.connectMongo();
+    const budget = await getSendBudget(USER_ID);
+    const date = String(req.query.date || budget.date || '').trim();
+    const sent = await db.profiles.listSentOnDate(USER_ID, date, SEND_DAY_TZ);
+    res.json({
+      date,
+      timeZone: SEND_DAY_TZ,
+      count: sent.length,
+      budget,
+      items: sent.map((p) => ({
+        name: p.name,
+        productName: p.productName || p.recommendedProduct || null,
+        messageSentAt: p.messageSentAt,
+        profileUrl: p.profileUrl,
+        message: p.aiMessage || p.lastMessage || '',
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.post('/api/scrape/start', async (req, res) => {
@@ -358,7 +551,7 @@ function normalizeFilters(raw) {
     location: String(raw.location || '').trim(),
     maxResults: Math.max(0, Number(raw.maxResults || 50)),
     startIndex: Math.max(0, Number(raw.startIndex || 0)),
-    sendMessages: false,
+    sendMessages: raw.sendMessages === true || raw.sendMessages === 'true' || raw.autoSend === true,
     aiMessages: raw.aiMessages !== false && raw.aiMessages !== 'false',
     rescrape: Boolean(raw.rescrape),
   };

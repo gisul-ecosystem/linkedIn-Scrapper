@@ -3,185 +3,253 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LinkedIn Scraper</title>
+  <title>Gisul Outreach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div id="appScreen" class="app">
-    <header class="header">
-      <div class="logo">in</div>
-      <div>
-        <h1>Connection Scraper</h1>
-        <p class="subtitle">Scrape → AI draft into queue → you click Send</p>
+  <div class="shell" id="appScreen">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">G</div>
+        <div>
+          <div class="brand-name">Gisul Outreach</div>
+          <div class="brand-sub" id="flowHint">Scrape → AI draft → send one-by-one</div>
+        </div>
       </div>
-      <div class="header-actions">
-        <div class="status-badge warn" id="linkedInStatus">LinkedIn: not connected</div>
+      <div class="topbar-meta">
+        <span class="pill warn" id="linkedInStatus">LinkedIn offline</span>
+        <span class="pill muted" id="sendBudgetPill">Sends today · —</span>
+        <span class="pill muted" id="mongoPill">Mongo…</span>
       </div>
     </header>
 
-    <section class="card linkedin-card" id="linkedInPanel">
-      <h2>Step 1 — Connect LinkedIn</h2>
-      <p class="hint">Click Connect, then sign in inside Chromium. Session is saved to <code>.auth</code>.</p>
-      <p class="hint" id="dockerLoginHint" hidden>
-        App is running in Docker — use the viewer below. A blank screen is normal when Chromium is closed;
-        click <strong>Connect LinkedIn</strong> or start a scrape to open Chromium inside the viewer.
-      </p>
-      <div class="actions">
-        <button id="connectLinkedInBtn" class="btn primary">Connect LinkedIn</button>
-        <a id="openViewerBtn" class="btn" href="/vnc/vnc_lite.html?autoconnect=1&resize=scale" target="_blank" rel="noopener" hidden>Open browser viewer</a>
-        <button id="reloadViewerBtn" class="btn" type="button" hidden>Reload viewer</button>
-        <span id="linkedInJobStatus" class="hint"></span>
+    <section class="panel connect-panel" id="linkedInPanel">
+      <div class="panel-head">
+        <div>
+          <h2>LinkedIn session</h2>
+          <p class="lede">Sign in once. Session stays until you logout.</p>
+        </div>
+        <div class="actions tight">
+          <button id="connectLinkedInBtn" class="btn primary" type="button">Connect</button>
+          <button id="backToLinkedInBtn" class="btn ghost" type="button" hidden>Back to LinkedIn</button>
+          <button id="logoutLinkedInBtn" class="btn ghost-danger" type="button" hidden>Logout</button>
+          <a id="openViewerBtn" class="btn primary" href="/viewer.html" target="_blank" rel="noopener" hidden>Open full viewer</a>
+          <button id="reloadViewerBtn" class="btn ghost" type="button" hidden>Reload panel</button>
+        </div>
       </div>
+      <p class="hint" id="dockerLoginHint" hidden>
+        Running in Docker — click <strong>Open full viewer</strong> to sign in.
+        Prefer <strong>email + password</strong> (not Google).
+        Stuck on blank Google page? Click <strong>Back to LinkedIn</strong> (while Connect is running).
+      </p>
+      <p class="status-line" id="linkedInJobStatus"></p>
       <div id="browserViewerWrap" class="viewer-wrap" hidden>
-        <iframe id="browserViewer" title="LinkedIn Chromium" allow="clipboard-read; clipboard-write"></iframe>
+        <iframe
+          id="browserViewer"
+          title="LinkedIn Chromium"
+          allow="clipboard-read; clipboard-write"
+          scrolling="no"
+        ></iframe>
       </div>
     </section>
 
-    <main class="grid" id="scraperPanel">
-      <section class="card">
-        <h2>Step 2 — Search &amp; scrape</h2>
-        <label class="field">
-          <span>Direct LinkedIn profile URL (optional)</span>
-          <input
-            id="profileUrl"
-            type="url"
-            placeholder="https://www.linkedin.com/in/username"
-            autocomplete="off"
-          />
-          <small class="hint">If set, only this one profile is scraped (search filters below are ignored).</small>
+    <div class="workspace">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <h2>Run</h2>
+            <p class="lede">Target profiles, then let AI match Racko / KanonKode / Aaptor.</p>
+          </div>
+        </div>
+
+        <label class="toggle-row" for="autoSend">
+          <div>
+            <strong>Auto-send messages</strong>
+            <span class="hint">Max 60/day · pause 10 min after every 20. Already-scraped profiles are skipped instantly so the next day continues where you left off.</span>
+          </div>
+          <input id="autoSend" type="checkbox" />
+          <span class="switch" aria-hidden="true"></span>
         </label>
+
+        <label class="field">
+          <span>Direct profile URL <em>(optional)</em></span>
+          <input id="profileUrl" type="url" placeholder="https://www.linkedin.com/in/username" autocomplete="off" />
+        </label>
+
         <label class="field">
           <span>Connection type</span>
           <select id="connectionType"></select>
           <small id="typeDescription" class="hint"></small>
         </label>
-        <label class="field">
-          <span>Keywords</span>
-          <input id="keywords" type="text" placeholder="e.g. trainer, founder" />
-        </label>
-        <div class="row">
-          <label class="field">
-            <span>Job title</span>
-            <input id="title" type="text" placeholder="CEO, Engineer…" />
-          </label>
-          <label class="field">
-            <span>Company</span>
-            <input id="company" type="text" placeholder="Company name" />
-          </label>
-        </div>
-        <label class="field">
-          <span>Location</span>
-          <input id="location" type="text" placeholder="City or country" />
-        </label>
+
         <div class="row">
           <label class="field">
             <span>Max profiles</span>
-            <input id="maxResults" type="number" min="1" max="500" value="50" />
+            <input id="maxResults" type="number" min="1" max="500" value="60" />
+            <small class="hint">Tip: set to 60 with Auto-send — matches daily send cap.</small>
           </label>
           <label class="field">
             <span>Start index</span>
             <input id="startIndex" type="number" min="0" value="0" />
           </label>
         </div>
-        <label class="checkbox">
-          <input id="aiMessages" type="checkbox" checked />
-          AI: pick Racko or Aaptor + draft message into queue
-        </label>
-        <label class="checkbox">
-          <input id="rescrape" type="checkbox" />
-          Re-scrape existing profiles
-        </label>
+
+        <div class="option-stack">
+          <label class="check-row">
+            <input id="aiMessages" type="checkbox" checked />
+            <span>AI match + draft (Racko / KanonKode / Aaptor)</span>
+          </label>
+          <label class="check-row">
+            <input id="rescrape" type="checkbox" />
+            <span>Re-scrape profiles already in Mongo</span>
+          </label>
+        </div>
+
         <p class="hint" id="aiHint"></p>
-        <div class="actions">
-          <button id="startBtn" class="btn primary" disabled>Start scrape</button>
-          <button id="refreshBtn" class="btn">Refresh</button>
-        </div>
         <p class="hint preview" id="previewUrl"></p>
-      </section>
 
-      <section class="card">
-        <h2>Job progress</h2>
-        <div class="job-row"><strong>Scrape:</strong> <span id="jobStatus">idle</span></div>
-        <div class="job-row"><strong>Current:</strong> <span id="jobCurrent">—</span></div>
-        <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
-        <div class="job-row"><span id="jobCounts">0 / 0</span></div>
-        <div class="job-row"><strong>Send job:</strong> <span id="sendJobStatus">idle</span></div>
-        <ul id="jobLogs" class="logs"></ul>
         <div class="actions">
-          <button id="downloadBtn" class="btn">Download Excel</button>
-          <button id="loadResultsBtn" class="btn">Load all results</button>
+          <button id="startBtn" class="btn primary lg" disabled>Start</button>
+          <button id="refreshBtn" class="btn ghost" type="button">Refresh</button>
+          <button id="downloadBtn" class="btn ghost" type="button">Download all Excel</button>
+        </div>
+
+        <div class="report-box">
+          <div class="report-title">Daily send report</div>
+          <p class="hint">Excel of who was messaged, which product, and the exact message — for a chosen day.</p>
+          <div class="row report-row">
+            <label class="field">
+              <span>Report date</span>
+              <input id="reportDate" type="date" />
+            </label>
+            <div class="actions tight report-actions">
+              <button id="dailyReportBtn" class="btn primary" type="button">Download daily Excel</button>
+            </div>
+          </div>
         </div>
       </section>
-    </main>
 
-    <section class="card results-card">
-      <h2>Message queue <span id="queueCount" class="count"></span></h2>
-      <p class="hint">Drafts from scrape stay here. Review, edit, then send. Nothing is sent until you click Send.</p>
-      <div class="actions" style="margin-bottom:12px">
-        <button id="loadQueueBtn" class="btn">Refresh queue</button>
-        <button id="sendSelectedBtn" class="btn primary">Send selected</button>
-        <button id="sendAllBtn" class="btn">Send all queued</button>
-        <button id="skipSelectedBtn" class="btn">Skip selected</button>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th><input type="checkbox" id="selectAllQueue" title="Select all" /></th>
-              <th>Name</th>
-              <th>Product</th>
-              <th>Score</th>
-              <th>Draft message</th>
-              <th>Status</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="queueBody">
-            <tr><td colspan="7" class="empty">Queue is empty — run a scrape first</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+      <section class="panel activity-panel">
+        <div class="panel-head">
+          <div>
+            <h2>Live activity</h2>
+            <p class="lede">Scrape and send progress in one place.</p>
+          </div>
+        </div>
 
-    <section class="card results-card">
-      <h2>All scraped <span id="resultCount" class="count"></span></h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Headline</th>
-              <th>Product</th>
-              <th>Queue</th>
-              <th>Sent</th>
-              <th>Profile</th>
-            </tr>
-          </thead>
-          <tbody id="resultsBody">
-            <tr><td colspan="6" class="empty">No results yet</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+        <div class="stat-grid">
+          <div class="stat">
+            <span class="stat-label">Scrape</span>
+            <strong id="jobStatus">idle</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Progress</span>
+            <strong id="jobCounts">0 / 0</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Sent this run</span>
+            <strong id="jobSent">0</strong>
+          </div>
+          <div class="stat">
+            <span class="stat-label">Queue send</span>
+            <strong id="sendJobStatus">idle</strong>
+          </div>
+        </div>
 
-    <section class="card results-card">
-      <h2>Scrape history (MongoDB)</h2>
-      <p class="hint" id="mongoHint">Jobs and profiles are stored in local MongoDB.</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Job ID</th>
-              <th>Status</th>
-              <th>Processed</th>
-              <th>Started</th>
-              <th>Finished</th>
-            </tr>
-          </thead>
-          <tbody id="jobsBody">
-            <tr><td colspan="5" class="empty">No jobs yet</td></tr>
-          </tbody>
-        </table>
+        <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+        <p class="status-line"><span class="muted">Current:</span> <span id="jobCurrent">—</span></p>
+        <ul id="jobLogs" class="logs"></ul>
+      </section>
+    </div>
+
+    <section class="panel">
+      <div class="tabs" role="tablist">
+        <button class="tab active" type="button" data-tab="activity">Activity feed</button>
+        <button class="tab" type="button" data-tab="queue">Manual queue <span id="queueCount" class="count"></span></button>
+        <button class="tab" type="button" data-tab="results">All scraped <span id="resultCount" class="count"></span></button>
+        <button class="tab" type="button" data-tab="history">History</button>
+      </div>
+
+      <div class="tab-panel active" id="tab-activity">
+        <p class="hint" id="activityModeHint">Auto-send is on — matches send immediately during the scrape.</p>
+        <div id="activityFeed" class="feed">
+          <div class="empty-state">Run a scrape to see sent / skipped profiles here.</div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-queue">
+        <p class="hint">Only needed when Auto-send is off. Review drafts, then send selected or all.</p>
+        <div class="actions tight" style="margin-bottom:14px">
+          <button id="loadQueueBtn" class="btn ghost" type="button">Refresh</button>
+          <button id="sendSelectedBtn" class="btn primary" type="button">Send selected</button>
+          <button id="sendAllBtn" class="btn ghost" type="button">Send all</button>
+          <button id="skipSelectedBtn" class="btn ghost" type="button">Skip selected</button>
+          <button id="clearQueueBtn" class="btn ghost-danger" type="button">Clear queue</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th><input type="checkbox" id="selectAllQueue" title="Select all" /></th>
+                <th>Name</th>
+                <th>Product</th>
+                <th>Score</th>
+                <th>Draft</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="queueBody">
+              <tr><td colspan="7" class="empty">Queue is empty</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-results">
+        <div class="actions tight" style="margin-bottom:14px">
+          <button id="loadResultsBtn" class="btn ghost" type="button">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Headline</th>
+                <th>Product</th>
+                <th>Status</th>
+                <th>Sent</th>
+                <th>Profile</th>
+              </tr>
+            </thead>
+            <tbody id="resultsBody">
+              <tr><td colspan="6" class="empty">No results yet</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="tab-history">
+        <p class="hint" id="mongoHint">Jobs stored in MongoDB.</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Job ID</th>
+                <th>Status</th>
+                <th>Processed</th>
+                <th>Started</th>
+                <th>Finished</th>
+              </tr>
+            </thead>
+            <tbody id="jobsBody">
+              <tr><td colspan="5" class="empty">No jobs yet</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </section>
   </div>

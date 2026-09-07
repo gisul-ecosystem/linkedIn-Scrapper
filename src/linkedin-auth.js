@@ -25,17 +25,60 @@ async function isLoggedIn(page) {
   return (hasNav || hasMe) && !hasLogin;
 }
 
-async function waitForManualLogin(page, timeoutMs = 600000) {
-  console.log('[linkedin] Complete sign-in in the browser (including 2FA if prompted).');
-  console.log('[linkedin] After signing in, open https://www.linkedin.com/feed/ in that window.');
+function isGoogleAuthLimbo(url) {
+  return /accounts\.google\.com\/(gsi|o\/oauth2|signin|v3\/signin)/i.test(String(url || ''));
+}
 
+/**
+ * Google SSO often leaves Chromium on a blank accounts.google.com/gsi page.
+ * Bounce back to LinkedIn feed (or login) so the user isn't stuck.
+ */
+async function rescueFromGoogleLimbo(page) {
+  const url = page.url();
+  if (!isGoogleAuthLimbo(url)) return false;
+
+  console.log(`[linkedin] Stuck on Google auth page → returning to LinkedIn (${url.slice(0, 80)}…)`);
+  try {
+    await gotoWithRetry(page, FEED_URL);
+    await sleep(1500);
+    if (await isLoggedIn(page)) {
+      console.log('[linkedin] Google SSO worked — now on LinkedIn feed');
+      return true;
+    }
+    await gotoWithRetry(page, LOGIN_URL);
+    await sleep(800);
+    console.log('[linkedin] Back on LinkedIn login — use email/password (avoid Google if possible)');
+    return true;
+  } catch (err) {
+    console.warn(`[linkedin] rescue failed: ${err.message}`);
+    return false;
+  }
+}
+
+async function waitForManualLogin(page, timeoutMs = 600000) {
+  console.log('[linkedin] Complete sign-in in the browser.');
+  console.log('[linkedin] Prefer LinkedIn email + password (Google SSO often gets stuck on a blank page).');
+  console.log('[linkedin] If stuck on Google: click Back to LinkedIn in the app, or open https://www.linkedin.com/feed/');
+
+  let lastRescueAt = 0;
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     if (await isLoggedIn(page)) {
       console.log(`[linkedin] Authenticated → ${page.url()}`);
       return true;
     }
-    await sleep(1500);
+
+    // Aggressive rescue from blank Google GSI page
+    if (Date.now() - lastRescueAt > 4000) {
+      const rescued = await rescueFromGoogleLimbo(page);
+      if (rescued) lastRescueAt = Date.now();
+      if (await isLoggedIn(page)) {
+        console.log(`[linkedin] Authenticated → ${page.url()}`);
+        return true;
+      }
+    }
+
+    await sleep(1200);
   }
   throw new Error('LinkedIn login timed out. Finish sign-in in the browser viewer within 10 minutes.');
 }
@@ -71,6 +114,15 @@ async function ensureLinkedInLoggedIn(page, context, sessionPath, { preferManual
   await saveLinkedInSession(context, sessionPath);
 }
 
+async function clearLinkedInSession(sessionPath) {
+  if (sessionPath && fs.existsSync(sessionPath)) {
+    fs.unlinkSync(sessionPath);
+    console.log(`[auth] LinkedIn session deleted → ${sessionPath}`);
+    return true;
+  }
+  return false;
+}
+
 function hasLinkedInSession(sessionPath) {
   return fs.existsSync(sessionPath);
 }
@@ -81,4 +133,5 @@ module.exports = {
   waitForManualLogin,
   saveLinkedInSession,
   hasLinkedInSession,
+  clearLinkedInSession,
 };

@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 
 let pollTimer = null;
 let queueItems = [];
+let activityItems = [];
 
 async function api(path, options = {}) {
   const headers = { ...(options.headers || {}) };
@@ -14,23 +15,40 @@ async function api(path, options = {}) {
   return data;
 }
 
+function autoSendOn() {
+  return Boolean($('autoSend')?.checked);
+}
+
+function syncAutoSendUi() {
+  const on = autoSendOn();
+  const row = document.querySelector('.toggle-row');
+  if (row) row.classList.toggle('on', on);
+  $('flowHint').textContent = on
+    ? 'Scrape → AI draft → send one-by-one'
+    : 'Scrape → AI draft → queue for review';
+  $('activityModeHint').textContent = on
+    ? 'Auto-send is on — matches are messaged immediately during the scrape.'
+    : 'Auto-send is off — drafts wait in Manual queue until you send.';
+}
+
 function getFilters() {
   return {
     profileUrl: $('profileUrl').value.trim(),
     connectionType: $('connectionType').value,
-    keywords: $('keywords').value.trim(),
-    title: $('title').value.trim(),
-    company: $('company').value.trim(),
-    location: $('location').value.trim(),
-    maxResults: Number($('maxResults').value) || 50,
+    keywords: '',
+    title: '',
+    company: '',
+    location: '',
+    maxResults: Number($('maxResults').value) || 60,
     startIndex: Number($('startIndex').value) || 0,
     rescrape: $('rescrape').checked,
     aiMessages: $('aiMessages').checked,
-    sendMessages: false,
+    sendMessages: autoSendOn(),
   };
 }
 
 async function initApp() {
+  syncAutoSendUi();
   const status = await api('/api/status');
   updateLinkedInUI(status);
   $('startBtn').disabled = !status.linkedInConnected || status.scrapeJob?.status === 'running';
@@ -43,44 +61,74 @@ async function initApp() {
   loadResults().catch(() => {});
   loadQueue().catch(() => {});
   loadJobs().catch(() => {});
+  loadActivity().catch(() => {});
   startPolling();
 }
 
 function updateLinkedInUI(status) {
   const badge = $('linkedInStatus');
+  const logoutBtn = $('logoutLinkedInBtn');
+  const backBtn = $('backToLinkedInBtn');
   if (status.linkedInConnected) {
-    badge.textContent = 'LinkedIn: connected';
-    badge.className = 'status-badge ok';
-    $('connectLinkedInBtn').textContent = 'Reconnect LinkedIn';
+    badge.textContent = 'LinkedIn connected';
+    badge.className = 'pill ok';
+    $('connectLinkedInBtn').textContent = 'Reconnect';
     $('startBtn').disabled = status.scrapeJob?.status === 'running';
+    if (logoutBtn) logoutBtn.hidden = false;
+    if (backBtn) backBtn.hidden = true;
+    $('linkedInPanel').classList.add('connected');
   } else {
-    badge.textContent = 'LinkedIn: not connected';
-    badge.className = 'status-badge warn';
+    badge.textContent = 'LinkedIn offline';
+    badge.className = 'pill warn';
+    $('connectLinkedInBtn').textContent = 'Connect';
     $('startBtn').disabled = true;
+    if (logoutBtn) logoutBtn.hidden = true;
+    if (backBtn) backBtn.hidden = status.linkedInJob?.status !== 'running';
+    $('linkedInPanel').classList.remove('connected');
   }
+
   const lj = status.linkedInJob || {};
+  if (backBtn && lj.status === 'running') backBtn.hidden = false;
   $('linkedInJobStatus').textContent =
     lj.status === 'running'
       ? status.inDocker
-        ? 'Sign in inside the Chromium viewer below…'
+        ? 'Sign in in full viewer — if stuck on Google, click Back to LinkedIn'
         : 'Sign in inside the Chromium window…'
       : lj.status === 'failed'
         ? lj.error || 'Failed'
         : '';
 
   if (status.mongo) {
+    $('mongoPill').textContent = status.mongo.ok
+      ? `Mongo · ${status.queueCount || 0} queued`
+      : 'Mongo offline';
+    $('mongoPill').className = status.mongo.ok ? 'pill muted' : 'pill warn';
     $('mongoHint').textContent = status.mongo.ok
-      ? `MongoDB OK — ${status.mongo.db} @ ${status.mongo.uri} | queue: ${status.queueCount || 0}`
-      : 'MongoDB not connected. Run: npm run mongo:up';
+      ? `MongoDB OK — ${status.mongo.db} @ ${status.mongo.uri}`
+      : 'MongoDB not connected. Run docker compose up -d.';
   }
   $('queueCount').textContent = status.queueCount ? `(${status.queueCount})` : '';
+
+  const budget = status.sendBudget;
+  const budgetPill = $('sendBudgetPill');
+  if (budgetPill && budget) {
+    budgetPill.textContent = `Sends today · ${budget.sent}/${budget.limit} (${budget.remaining} left)`;
+    budgetPill.className = budget.remaining > 0 ? 'pill muted' : 'pill warn';
+    budgetPill.title = `${budget.date} · ${budget.timeZone} · pause ${budget.batchPauseMinutes}m every ${budget.batchSize}`;
+  }
+
+  const reportDate = $('reportDate');
+  if (reportDate && budget?.date && !reportDate.value) {
+    reportDate.value = budget.date;
+  }
 
   const dockerHint = $('dockerLoginHint');
   const viewerBtn = $('openViewerBtn');
   const reloadViewerBtn = $('reloadViewerBtn');
   const viewerWrap = $('browserViewerWrap');
   const viewer = $('browserViewer');
-  const viewerUrl = status.browserViewerUrl || '/vnc/vnc_lite.html?autoconnect=1&resize=scale';
+  const viewerUrl = '/viewer.html';
+  const panelVncUrl = status.browserViewerUrl || '/vnc/vnc_lite.html?autoconnect=1&scale=true';
   if (status.inDocker) {
     dockerHint.hidden = false;
     viewerBtn.hidden = false;
@@ -88,7 +136,7 @@ function updateLinkedInUI(status) {
     viewerBtn.href = viewerUrl;
     viewerWrap.hidden = false;
     if (viewer && !viewer.dataset.loaded) {
-      viewer.src = viewerUrl;
+      viewer.src = panelVncUrl;
       viewer.dataset.loaded = '1';
     }
   } else {
@@ -101,8 +149,7 @@ function updateLinkedInUI(status) {
 
 function reloadBrowserViewer() {
   const viewer = $('browserViewer');
-  const viewerBtn = $('openViewerBtn');
-  const url = (viewerBtn && viewerBtn.href) || '/vnc/vnc_lite.html?autoconnect=1&resize=scale';
+  const url = '/vnc/vnc_lite.html?autoconnect=1&scale=true';
   if (!viewer) return;
   viewer.dataset.loaded = '1';
   viewer.src = 'about:blank';
@@ -127,10 +174,10 @@ async function loadConnectionTypes() {
 
   try {
     const products = await api('/api/products');
-    const names = (products.products || []).map((p) => p.name).join(' + ');
+    const names = (products.products || []).map((p) => p.name).join(' · ');
     $('aiHint').textContent = products.aiConfigured
-      ? `AI (${products.provider}) + RAG — drafts go to queue. Products: ${names}`
-      : `Add ANTHROPIC_API_KEY or OPENAI_API_KEY. Matching ${names}.`;
+      ? `AI ready (${products.provider}) · ${names}`
+      : `Add ANTHROPIC_API_KEY or OPENAI_API_KEY · ${names}`;
   } catch {
     $('aiHint').textContent = '';
   }
@@ -146,12 +193,12 @@ async function updatePreviewUrl() {
   try {
     const filters = getFilters();
     if (filters.profileUrl) {
-      $('previewUrl').textContent = `Single profile: ${filters.profileUrl}`;
+      $('previewUrl').textContent = `Single profile · ${filters.profileUrl}`;
       return;
     }
     const params = new URLSearchParams(filters);
     const { url } = await api(`/api/preview-url?${params}`);
-    $('previewUrl').textContent = `LinkedIn URL: ${url}`;
+    $('previewUrl').textContent = `LinkedIn target · ${url}`;
   } catch {
     $('previewUrl').textContent = '';
   }
@@ -164,14 +211,18 @@ function renderJob(job) {
   const total = job?.total || 0;
   const done = job?.processed || 0;
   $('jobCounts').textContent = `${done} / ${total}`;
+  $('jobSent').textContent = String(job?.sent || 0);
   $('progressBar').style.width = total > 0 ? `${Math.round((done / total) * 100)}%` : '0%';
   const logs = $('jobLogs');
   logs.innerHTML = '';
-  (job?.logs || []).slice(-12).reverse().forEach((entry) => {
-    const li = document.createElement('li');
-    li.textContent = typeof entry === 'string' ? entry : entry.msg;
-    logs.appendChild(li);
-  });
+  (job?.logs || [])
+    .slice(-16)
+    .reverse()
+    .forEach((entry) => {
+      const li = document.createElement('li');
+      li.textContent = typeof entry === 'string' ? entry : entry.msg;
+      logs.appendChild(li);
+    });
 }
 
 function renderSendJob(job) {
@@ -180,9 +231,8 @@ function renderSendJob(job) {
     return;
   }
   const parts = [job.status || 'idle'];
-  if (job.total) parts.push(`${job.sent || 0} sent / ${job.failed || 0} failed / ${job.total} total`);
-  if (job.current) parts.push(job.current);
-  $('sendJobStatus').textContent = parts.join(' — ');
+  if (job.total) parts.push(`${job.sent || 0}/${job.total}`);
+  $('sendJobStatus').textContent = parts.join(' · ');
 }
 
 async function refreshStatus() {
@@ -193,15 +243,19 @@ async function refreshStatus() {
   $('resultCount').textContent = status.totalProfiles ? `(${status.totalProfiles})` : '';
   loadJobs().catch(() => {});
   loadQueue().catch(() => {});
+  loadActivity().catch(() => {});
 }
 
 async function connectLinkedIn() {
   $('connectLinkedInBtn').disabled = true;
   try {
     await api('/api/linkedin/connect', { method: 'POST' });
-    $('linkedInJobStatus').textContent = 'Sign in in the Chromium viewer…';
+    $('linkedInJobStatus').textContent = 'Sign in via Open full viewer (new tab)…';
+    // Auto-open fullscreen viewer — clicks work reliably there
+    window.open('/viewer.html', '_blank', 'noopener');
     const wrap = $('browserViewerWrap');
     if (wrap && !wrap.hidden) wrap.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    reloadBrowserViewer();
   } catch (err) {
     alert(err.message);
   } finally {
@@ -209,14 +263,100 @@ async function connectLinkedIn() {
   }
 }
 
+async function backToLinkedIn() {
+  const btn = $('backToLinkedInBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const result = await api('/api/linkedin/back', { method: 'POST' });
+    $('linkedInJobStatus').textContent = result.message || 'Navigated to LinkedIn';
+  } catch (err) {
+    alert(
+      `${err.message}\n\nOr in the viewer address bar paste:\nhttps://www.linkedin.com/feed/\nand press Enter.`
+    );
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function logoutLinkedIn() {
+  if (!confirm('Log out of LinkedIn? Saved session will be deleted.')) return;
+  const btn = $('logoutLinkedInBtn');
+  if (btn) btn.disabled = true;
+  try {
+    const result = await api('/api/linkedin/logout', { method: 'POST' });
+    $('linkedInJobStatus').textContent = result.message || 'Logged out';
+    await refreshStatus();
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
 async function startScrape() {
+  const filters = getFilters();
+  if (filters.sendMessages && !filters.aiMessages) {
+    alert('Turn on AI match + draft to auto-send messages.');
+    return;
+  }
+  if (
+    filters.sendMessages &&
+    !confirm('Auto-send is ON. Matched profiles will be messaged one-by-one during this scrape. Continue?')
+  ) {
+    return;
+  }
+
   $('startBtn').disabled = true;
   try {
-    await api('/api/scrape/start', { method: 'POST', body: JSON.stringify(getFilters()) });
+    await api('/api/scrape/start', { method: 'POST', body: JSON.stringify(filters) });
+    document.querySelector('.tab[data-tab="activity"]')?.click();
   } catch (err) {
     alert(err.message);
     $('startBtn').disabled = false;
   }
+}
+
+function statusBadgeClass(status) {
+  if (status === 'sent') return 'sent';
+  if (status === 'failed') return 'failed';
+  if (status === 'skipped') return 'skipped';
+  return 'queued';
+}
+
+async function loadActivity() {
+  const { profiles } = await api('/api/results');
+  activityItems = (profiles || [])
+    .filter((p) => p.aiMessage || p.queueStatus === 'skipped' || p.messageSent)
+    .slice(0, 80);
+
+  const feed = $('activityFeed');
+  if (!activityItems.length) {
+    feed.innerHTML = '<div class="empty-state">Run a scrape to see sent / skipped profiles here.</div>';
+    return;
+  }
+
+  feed.innerHTML = '';
+  activityItems.forEach((p) => {
+    const status = p.messageSent ? 'sent' : p.queueStatus || 'queued';
+    const reason = p.aiReason || p.messageError || '';
+    const card = document.createElement('article');
+    card.className = 'feed-card';
+    card.innerHTML = `
+      <span class="feed-badge ${statusBadgeClass(status)}">${esc(status)}</span>
+      <div>
+        <div class="feed-title">${esc(p.name || p.slug)}</div>
+        <div class="feed-meta">${esc(p.productName || p.recommendedProduct || '—')} · score ${p.relevanceScore ?? '—'}</div>
+        ${
+          status === 'skipped' && reason
+            ? `<div class="feed-reason"><strong>Skip reason:</strong> ${esc(reason)}</div>`
+            : ''
+        }
+        ${status === 'failed' && reason ? `<div class="feed-reason"><strong>Error:</strong> ${esc(reason)}</div>` : ''}
+        ${p.aiMessage ? `<div class="feed-msg">${esc(p.aiMessage)}</div>` : ''}
+      </div>
+      <a href="${esc(p.profileUrl)}" target="_blank" rel="noopener">Open</a>`;
+    feed.appendChild(card);
+  });
 }
 
 async function loadQueue() {
@@ -226,7 +366,7 @@ async function loadQueue() {
   const tbody = $('queueBody');
   tbody.innerHTML = '';
   if (!queueItems.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty">Queue is empty — run a scrape first</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">Queue is empty</td></tr>';
     return;
   }
 
@@ -241,11 +381,11 @@ async function loadQueue() {
       <td>${esc(p.productName || p.recommendedProduct || '—')}</td>
       <td>${p.relevanceScore ?? '—'}</td>
       <td>
-        <textarea class="queue-msg" data-slug="${esc(p.slug)}" rows="3" style="width:100%;min-width:220px">${esc(p.aiMessage || '')}</textarea>
+        <textarea class="queue-msg" data-slug="${esc(p.slug)}" rows="3">${esc(p.aiMessage || '')}</textarea>
       </td>
       <td>${esc(p.queueStatus || 'queued')}</td>
       <td>
-        <button class="btn send-one" data-slug="${esc(p.slug)}">Send</button>
+        <button class="btn primary send-one" data-slug="${esc(p.slug)}" type="button">Send</button>
       </td>`;
     tbody.appendChild(tr);
   });
@@ -283,7 +423,6 @@ async function sendSlugs(slugs) {
       method: 'POST',
       body: JSON.stringify({ slugs }),
     });
-    alert(`Sending ${slugs.length} message(s)… watch the browser window.`);
   } catch (err) {
     alert(err.message);
   }
@@ -294,7 +433,6 @@ async function sendAllQueued() {
     const all = queueItems.map((p) => p.slug);
     await saveEditedMessages(all);
     await api('/api/queue/send', { method: 'POST', body: JSON.stringify({ slugs: [] }) });
-    alert('Sending all queued messages…');
   } catch (err) {
     alert(err.message);
   }
@@ -309,6 +447,25 @@ async function skipSelected() {
   try {
     await api('/api/queue/skip', { method: 'POST', body: JSON.stringify({ slugs }) });
     await loadQueue();
+    await loadActivity();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function clearQueue() {
+  if (
+    !confirm(
+      'Clear all queued drafts? Sent messages stay in history. Scraped profiles stay in Mongo — only unsent queue drafts are removed.'
+    )
+  ) {
+    return;
+  }
+  try {
+    const result = await api('/api/queue/clear', { method: 'POST' });
+    await loadQueue();
+    await refreshStatus();
+    alert(result.message || `Cleared ${result.cleared || 0} draft(s)`);
   } catch (err) {
     alert(err.message);
   }
@@ -376,15 +533,20 @@ function startPolling() {
       updateLinkedInUI(status);
       renderJob(status.scrapeJob);
       renderSendJob(status.sendJob);
+      if (status.scrapeJob?.status === 'running') {
+        loadActivity().catch(() => {});
+      }
       if (status.scrapeJob?.status === 'completed') {
         loadResults();
         loadQueue();
         loadJobs();
+        loadActivity();
         $('startBtn').disabled = !status.linkedInConnected;
       }
       if (status.sendJob?.status === 'completed' || status.sendJob?.status === 'failed') {
         loadQueue();
         loadResults();
+        loadActivity();
       }
     } catch {
       /* ignore */
@@ -392,12 +554,25 @@ function startPolling() {
   }, 2500);
 }
 
-['connectionType', 'keywords', 'title', 'company', 'location', 'maxResults', 'startIndex', 'profileUrl'].forEach((id) => {
+document.querySelectorAll('.tab').forEach((tab) => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
+    tab.classList.add('active');
+    $(`tab-${tab.dataset.tab}`)?.classList.add('active');
+  });
+});
+
+$('autoSend')?.addEventListener('change', syncAutoSendUi);
+
+['connectionType', 'maxResults', 'startIndex', 'profileUrl'].forEach((id) => {
   $(id).addEventListener('input', updatePreviewUrl);
   $(id).addEventListener('change', updatePreviewUrl);
 });
 
 $('connectLinkedInBtn').addEventListener('click', connectLinkedIn);
+$('backToLinkedInBtn')?.addEventListener('click', backToLinkedIn);
+$('logoutLinkedInBtn')?.addEventListener('click', logoutLinkedIn);
 $('reloadViewerBtn')?.addEventListener('click', reloadBrowserViewer);
 $('startBtn').addEventListener('click', startScrape);
 $('refreshBtn').addEventListener('click', refreshStatus);
@@ -406,6 +581,7 @@ $('loadQueueBtn').addEventListener('click', loadQueue);
 $('sendSelectedBtn').addEventListener('click', () => sendSlugs(selectedQueueSlugs()));
 $('sendAllBtn').addEventListener('click', sendAllQueued);
 $('skipSelectedBtn').addEventListener('click', skipSelected);
+$('clearQueueBtn')?.addEventListener('click', clearQueue);
 $('selectAllQueue').addEventListener('change', (e) => {
   document.querySelectorAll('.queue-check').forEach((el) => {
     el.checked = e.target.checked;
@@ -420,6 +596,30 @@ $('downloadBtn').addEventListener('click', async () => {
     const a = document.createElement('a');
     a.href = url;
     a.download = 'connections.xlsx';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(err.message);
+  }
+});
+
+$('dailyReportBtn')?.addEventListener('click', async () => {
+  const date = $('reportDate')?.value;
+  if (!date) {
+    alert('Pick a report date');
+    return;
+  }
+  try {
+    const res = await fetch(`/api/reports/daily-sends?date=${encodeURIComponent(date)}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || 'Daily report download failed');
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `daily-sends-${date}.xlsx`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (err) {

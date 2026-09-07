@@ -3,4 +3,5 @@ module.exports = {
   users: require('./users'),
   profiles: require('./profiles'),
   jobs: require('./jobs'),
+  sendLimits: require('./send-limits'),
 };

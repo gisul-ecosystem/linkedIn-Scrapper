@@ -36,6 +36,15 @@ const RAG_MIN_SCORE = Math.max(0, Number(process.env.RAG_MIN_SCORE || 60));
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'linkedin_scrapper';
 
+// LinkedIn outbound pacing
+const DAILY_SEND_LIMIT = Math.max(1, Number(process.env.DAILY_SEND_LIMIT || 60));
+const SEND_BATCH_SIZE = Math.max(1, Number(process.env.SEND_BATCH_SIZE || 20));
+const SEND_BATCH_PAUSE_MS = Math.max(
+  0,
+  Number(process.env.SEND_BATCH_PAUSE_MS || 10 * 60 * 1000)
+);
+const SEND_DAY_TZ = process.env.SEND_DAY_TZ || 'Asia/Kolkata';
+
 module.exports = {
   ROOT,
   OUT_DIR,
@@ -65,4 +74,8 @@ module.exports = {
   RAG_MIN_SCORE,
   MONGODB_URI,
   MONGODB_DB,
+  DAILY_SEND_LIMIT,
+  SEND_BATCH_SIZE,
+  SEND_BATCH_PAUSE_MS,
+  SEND_DAY_TZ,
 };

@@ -158,6 +158,31 @@ async function markQueueSkipped(ownerId, slug) {
   return getProfile(ownerId, slug);
 }
 
+async function clearQueue(ownerId) {
+  const filter = {
+    ownerId,
+    messageSent: { $ne: true },
+    $or: [
+      { queueStatus: 'queued' },
+      {
+        queueStatus: { $exists: false },
+        messageSent: { $ne: true },
+        relevant: { $ne: false },
+        aiMessage: { $exists: true, $ne: '' },
+      },
+    ],
+  };
+  const result = await getDb().collection('profiles').updateMany(filter, {
+    $set: {
+      queueStatus: 'cleared',
+      aiMessage: '',
+      lastMessage: '',
+      updatedAt: new Date(),
+    },
+  });
+  return result.modifiedCount || 0;
+}
+
 async function countProfiles(ownerId) {
   return getDb().collection('profiles').countDocuments({ ownerId });
 }
@@ -167,6 +192,36 @@ async function profilesMapBySlug(ownerId) {
   const map = {};
   for (const row of rows) map[row.slug] = row;
   return map;
+}
+
+async function listSentOnDate(ownerId, dateKey, timeZone = 'Asia/Kolkata') {
+  const rows = await getDb()
+    .collection('profiles')
+    .find({
+      ownerId,
+      messageSent: true,
+      messageSentAt: { $exists: true, $nin: [null, ''] },
+    })
+    .sort({ messageSentAt: 1 })
+    .limit(5000)
+    .toArray();
+
+  return rows.filter((p) => {
+    const at = p.messageSentAt ? new Date(p.messageSentAt) : null;
+    if (!at || Number.isNaN(at.getTime())) return false;
+    const key = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(at);
+    return key === dateKey;
+  });
+}
+
+async function countSentOnDate(ownerId, dateKey, timeZone = 'Asia/Kolkata') {
+  const rows = await listSentOnDate(ownerId, dateKey, timeZone);
+  return rows.length;
 }
 
 module.exports = {
@@ -179,7 +234,10 @@ module.exports = {
   updateQueuedMessage,
   markMessageSent,
   markQueueSkipped,
+  clearQueue,
   countProfiles,
   profilesMapBySlug,
+  listSentOnDate,
+  countSentOnDate,
   toProfileDoc,
 };

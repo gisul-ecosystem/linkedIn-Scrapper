@@ -73,4 +73,73 @@ async function writeConnectionsExcel(profiles, filePath, meta = {}) {
   return filePath;
 }
 
-module.exports = { writeConnectionsExcel };
+async function writeDailySendReportExcel(sentProfiles, filePath, meta = {}) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'linkedin-scrapper';
+
+  const sheet = workbook.addWorksheet('Daily Sends');
+  sheet.columns = [
+    { header: '#', key: 'n', width: 6 },
+    { header: 'Sent At', key: 'messageSentAt', width: 22 },
+    { header: 'Name', key: 'name', width: 28 },
+    { header: 'Headline', key: 'headline', width: 36 },
+    { header: 'Company', key: 'company', width: 24 },
+    { header: 'Location', key: 'location', width: 20 },
+    { header: 'Product', key: 'productName', width: 28 },
+    { header: 'Score', key: 'relevanceScore', width: 10 },
+    { header: 'Message Sent', key: 'aiMessage', width: 70 },
+    { header: 'Fit Reason', key: 'aiReason', width: 40 },
+    { header: 'Profile URL', key: 'profileUrl', width: 50 },
+    { header: 'Status', key: 'queueStatus', width: 12 },
+  ];
+  sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  sheet.getRow(1).fill = {
+    type: 'pattern',
+    pattern: 'solid',
+    fgColor: { argb: 'FF0B5CAB' },
+  };
+
+  sentProfiles.forEach((p, i) => {
+    sheet.addRow({
+      n: i + 1,
+      messageSentAt: p.messageSentAt || '',
+      name: p.name || '',
+      headline: p.headline || '',
+      company: p.company || '',
+      location: p.location || '',
+      productName: p.productName || p.recommendedProduct || '',
+      relevanceScore: p.relevanceScore ?? '',
+      aiMessage: p.aiMessage || p.lastMessage || '',
+      aiReason: p.aiReason || '',
+      profileUrl: p.profileUrl || '',
+      queueStatus: p.queueStatus || (p.messageSent ? 'sent' : ''),
+    });
+  });
+
+  const metaSheet = workbook.addWorksheet('Report Info');
+  metaSheet.columns = [
+    { header: 'Key', key: 'k', width: 24 },
+    { header: 'Value', key: 'v', width: 80 },
+  ];
+  for (const [k, v] of Object.entries({
+    ...meta,
+    totalSent: sentProfiles.length,
+    generatedAt: new Date().toISOString(),
+  })) {
+    metaSheet.addRow({ k, v: String(v) });
+  }
+
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.${process.pid}.tmp.xlsx`;
+  await workbook.xlsx.writeFile(tmp);
+  try {
+    fs.renameSync(tmp, filePath);
+  } catch {
+    const fallback = filePath.replace(/\.xlsx$/i, `-${Date.now()}.xlsx`);
+    fs.renameSync(tmp, fallback);
+    return fallback;
+  }
+  return filePath;
+}
+
+module.exports = { writeConnectionsExcel, writeDailySendReportExcel };

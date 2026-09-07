@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LinkedIn Browser Viewer</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #0f1720;
+      font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    .bar {
+      height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 0 14px;
+      background: #14212b;
+      color: #d7e2ea;
+      font-size: 13px;
+    }
+    .bar a, .bar button {
+      color: #fff;
+      background: #0b5cab;
+      border: 0;
+      border-radius: 8px;
+      padding: 7px 12px;
+      text-decoration: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .bar a.ghost {
+      background: transparent;
+      border: 1px solid #3a4a57;
+      color: #d7e2ea;
+    }
+    iframe {
+      display: block;
+      width: 100%;
+      height: calc(100% - 42px);
+      border: 0;
+      background: #111;
+    }
+  </style>
+</head>
+<body>
+  <div class="bar">
+    <span>Use this full tab for LinkedIn login — click targets match the screen</span>
+    <span>
+      <button type="button" onclick="document.getElementById('vnc').src=document.getElementById('vnc').src">Reload</button>
+      <a class="ghost" href="/">Back to app</a>
+    </span>
+  </div>
+  <iframe
+    id="vnc"
+    title="LinkedIn Chromium"
+    allow="clipboard-read; clipboard-write"
+    scrolling="no"
+    src="/vnc/vnc_lite.html?autoconnect=1&scale=true"
+  ></iframe>
+</body>
+</html>

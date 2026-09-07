@@ -8,6 +8,8 @@ const { scrapeProfile } = require('./profile');
 const { writeConnectionsExcel } = require('./export');
 const { resolveConnectionType, buildSearchUrl } = require('./search');
 const { generateOutreachMessage } = require('./ai-message');
+const { sendMessageToProfile } = require('./messaging');
+const { getSendBudget, recordSuccessfulSend, maybeBatchPause } = require('./send-limits');
 const { userPaths } = require('./paths');
 const {
   ensureDirs,
@@ -49,6 +51,9 @@ async function runScrapeJob(userId, filters, onProgress) {
     current: null,
     errors: [],
     logs: [],
+    sent: 0,
+    sendFailed: 0,
+    skipped: 0,
   };
   activeJobs.set(userId, job);
   await db.jobs.createScrapeJob(job);
@@ -75,6 +80,7 @@ async function runScrapeJob(userId, filters, onProgress) {
   };
 
   const useAi = filters.aiMessages ?? AI_MESSAGES;
+  const autoSend = Boolean(filters.sendMessages);
 
   const startIndex = Math.max(0, Number(filters.startIndex || 0));
   const maxConnections = Number(filters.maxResults || 0);
@@ -96,7 +102,11 @@ async function runScrapeJob(userId, filters, onProgress) {
       await log(`Mode: ${filters.connectionType} | ${buildSearchUrl(filters)}`);
     }
     if (useAi) await log('AI product matching: Racko + KanonKode + Aaptor (RAG)');
-    await log('Messages go to QUEUE only — send from the frontend when ready');
+    if (autoSend) {
+      await log('Auto-send ON — matched profiles will be messaged one-by-one after AI draft');
+    } else {
+      await log('Auto-send OFF — drafts go to queue for manual send');
+    }
     await log(`MongoDB tracking enabled for owner=${userId}`);
 
     let connections;
@@ -116,56 +126,65 @@ async function runScrapeJob(userId, filters, onProgress) {
       await log(`Found ${connections.length} matching profiles`);
     }
 
-    job.total = connections.length;
+    // Fast resume: drop already-scraped before visiting pages (no delay)
+    let skippedKnown = 0;
+    if (!directProfileUrl && !filters.rescrape) {
+      const pending = [];
+      for (const conn of connections) {
+        const slug = slugFromProfileUrl(conn.profileUrl);
+        if (existingMap[slug]?.scrapedAt) {
+          skippedKnown += 1;
+          continue;
+        }
+        pending.push(conn);
+      }
+      await log(
+        `Fast resume: skipped ${skippedKnown} already scraped · ${pending.length} new left to process`
+      );
+      connections = pending;
+    }
+
+    const offset = directProfileUrl ? 0 : startIndex;
+    const sliced =
+      !directProfileUrl && maxConnections > 0
+        ? connections.slice(offset, offset + maxConnections)
+        : connections.slice(offset);
+
+    job.total = sliced.length;
+    job.skippedKnown = skippedKnown;
     await db.jobs.updateScrapeJob(jobId, { total: job.total, filters });
+    await log(`This run will process ${sliced.length} profile(s)`);
 
-    const limit = directProfileUrl
-      ? connections.length
-      : maxConnections > 0
-        ? Math.min(connections.length, startIndex + maxConnections)
-        : connections.length;
+    let sendBudget = await getSendBudget(userId);
+    await log(
+      `Daily send budget: ${sendBudget.sent}/${sendBudget.limit} used · ${sendBudget.remaining} left (${sendBudget.date})`
+    );
+    if (autoSend && sendBudget.remaining <= 0) {
+      await log('Daily send limit already reached — stopping. Try again tomorrow for the next profiles.');
+      job.status = 'completed';
+      job.finishedAt = new Date().toISOString();
+      await db.jobs.updateScrapeJob(jobId, {
+        status: 'completed',
+        finishedAt: job.finishedAt,
+        processed: 0,
+        resultCount: 0,
+      });
+      return job;
+    }
 
-    const loopStart = directProfileUrl ? 0 : startIndex;
-
-    for (let i = loopStart; i < limit; i += 1) {
-      const conn = connections[i];
+    for (let i = 0; i < sliced.length; i += 1) {
+      const conn = sliced[i];
       const slug = slugFromProfileUrl(conn.profileUrl);
       const existingProfile = existingMap[slug] || {};
 
       job.current = conn.listName || slug;
-      job.processed = i - startIndex;
+      job.processed = i;
       await db.jobs.updateScrapeJob(jobId, {
         current: job.current,
         processed: job.processed,
       });
 
-      // Never reopen profiles already handled unless rescrape / single-profile paste
-      if (!filters.rescrape && !directProfileUrl && existingProfile.scrapedAt) {
-        const status = existingProfile.queueStatus || (existingProfile.relevant === false ? 'skipped' : 'scraped');
-        if (!existingProfile.name) {
-          const filled = nameFromSlug(slug) || conn.listName || '';
-          if (filled) {
-            try {
-              await db.profiles.upsertProfile(
-                userId,
-                slug,
-                { ...existingProfile, name: filled, headline: existingProfile.headline || conn.headline || conn.subtitle || '' },
-                jobId
-              );
-              existingMap[slug] = { ...existingProfile, name: filled };
-            } catch {
-              /* ignore */
-            }
-          }
-        }
-        await log(
-          `[${i + 1}/${limit}] skip existing (${status}) ${existingMap[slug]?.name || existingProfile.name || slug}`
-        );
-        job.processed = i - startIndex + 1;
-        continue;
-      }
-
-      await log(`[${i + 1}/${limit}] ${conn.listName || slug}`);
+      await log(`[${i + 1}/${sliced.length}] ${conn.listName || slug}`);
       let profile;
       try {
         profile = await scrapeProfile(page, conn.profileUrl);
@@ -189,7 +208,7 @@ async function runScrapeJob(userId, filters, onProgress) {
       const record = {
         ...existingProfile,
         ...profile,
-        listIndex: i,
+        listIndex: offset + i,
         connectionType: filters.connectionType,
         searchKeywords: filters.keywords || '',
       };
@@ -227,9 +246,63 @@ async function runScrapeJob(userId, filters, onProgress) {
 
           if (!outreach.relevant) {
             record.queueStatus = 'skipped';
+            job.skipped = (job.skipped || 0) + 1;
             await log(
               `[${i + 1}] AI SKIP score=${outreach.relevanceScore || 0} — ${String(outreach.reason).slice(0, 120)}`
             );
+          } else if (autoSend && outreach.message) {
+            sendBudget = await getSendBudget(userId);
+            if (sendBudget.remaining <= 0) {
+              record.queueStatus = 'queued';
+              await log(
+                `[${i + 1}] Daily limit reached — draft saved to queue. Stopping run so tomorrow picks the next new profiles.`
+              );
+              try {
+                const saved = await db.profiles.upsertProfile(userId, slug, record, jobId);
+                existingMap[slug] = saved;
+              } catch (err) {
+                job.errors.push({ slug, error: err.message });
+              }
+              job.processed = i + 1;
+              break;
+            }
+
+            record.queueStatus = 'sending';
+            await log(
+              `[${i + 1}] AI MATCH → ${outreach.productName} score=${outreach.relevanceScore} — sending now (${sendBudget.remaining} left today)…`
+            );
+            try {
+              const savedBeforeSend = await db.profiles.upsertProfile(userId, slug, record, jobId);
+              existingMap[slug] = savedBeforeSend;
+
+              const result = await sendMessageToProfile(page, record.profileUrl, outreach.message, {
+                forceSend: true,
+              });
+              if (result.ok && result.sent) {
+                await db.profiles.markMessageSent(userId, slug, { sentAt: result.sentAt });
+                await recordSuccessfulSend(userId);
+                record.messageSent = true;
+                record.messageSentAt = result.sentAt || new Date().toISOString();
+                record.queueStatus = 'sent';
+                job.sent = (job.sent || 0) + 1;
+                await log(`[${i + 1}] SENT → ${record.name || slug}`);
+                await maybeBatchPause(job.sent, log);
+              } else {
+                await db.profiles.markMessageSent(userId, slug, {
+                  error: result.error || 'send failed',
+                });
+                record.queueStatus = 'failed';
+                record.messageError = result.error || 'send failed';
+                job.sendFailed = (job.sendFailed || 0) + 1;
+                await log(`[${i + 1}] SEND FAILED → ${result.error || 'unknown'}`);
+              }
+            } catch (sendErr) {
+              await db.profiles.markMessageSent(userId, slug, { error: sendErr.message }).catch(() => {});
+              record.queueStatus = 'failed';
+              record.messageError = sendErr.message;
+              job.sendFailed = (job.sendFailed || 0) + 1;
+              await log(`[${i + 1}] SEND ERROR → ${sendErr.message}`);
+            }
           } else {
             record.queueStatus = 'queued';
             await log(
@@ -242,7 +315,7 @@ async function runScrapeJob(userId, filters, onProgress) {
         }
       }
 
-      // Never auto-send — drafts stay in queue until frontend Send
+      // Persist after AI (+ optional auto-send)
 
       try {
         const saved = await db.profiles.upsertProfile(userId, slug, record, jobId);
@@ -252,7 +325,7 @@ async function runScrapeJob(userId, filters, onProgress) {
         await log(`[${i + 1}] Mongo save error: ${err.message}`);
       }
 
-      job.processed = i - startIndex + 1;
+      job.processed = i + 1;
       await db.jobs.updateScrapeJob(jobId, {
         processed: job.processed,
         errors: job.errors.slice(-50),
@@ -269,9 +342,9 @@ async function runScrapeJob(userId, filters, onProgress) {
       searchFilters: JSON.stringify(filters),
       processedThisRun: job.processed,
       aiMessages: useAi,
-      sendMessages: false,
+      sendMessages: autoSend,
       storage: 'mongodb',
-      queueOnly: true,
+      queueOnly: !autoSend,
     });
     try {
       fs.copyFileSync(xlsxPath, paths.excel);
@@ -288,7 +361,10 @@ async function runScrapeJob(userId, filters, onProgress) {
       resultCount: job.resultCount,
       processed: job.processed,
     });
-    await log(`Done — ${job.processed} profiles scraped (stored in MongoDB)`);
+    const sendSummary = autoSend
+      ? ` | sent ${job.sent || 0}, failed ${job.sendFailed || 0}, skipped ${job.skipped || 0}`
+      : '';
+    await log(`Done — ${job.processed} profiles scraped${sendSummary}`);
     return job;
   } catch (err) {
     job.status = 'failed';

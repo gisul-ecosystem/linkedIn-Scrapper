@@ -3,6 +3,7 @@ const { ACTION_DELAY_MS, HEADLESS } = require('./config');
 const { launchBrowser } = require('./browser');
 const { ensureLinkedInLoggedIn } = require('./linkedin-auth');
 const { sendMessageToProfile } = require('./messaging');
+const { getSendBudget, recordSuccessfulSend, maybeBatchPause } = require('./send-limits');
 const { userPaths } = require('./paths');
 const { sleep } = require('./utils');
 const db = require('./db');
@@ -39,6 +40,32 @@ async function runSendQueueJob(userId, { slugs = [] } = {}) {
 
   targets = targets.filter((p) => p.aiMessage && !p.messageSent && p.relevant !== false);
 
+  const budget = await getSendBudget(userId);
+  if (budget.remaining <= 0) {
+    const job = {
+      id: `send-${Date.now()}`,
+      userId,
+      status: 'completed',
+      startedAt: new Date().toISOString(),
+      finishedAt: new Date().toISOString(),
+      processed: 0,
+      total: 0,
+      sent: 0,
+      failed: 0,
+      logs: [
+        {
+          at: new Date().toISOString(),
+          msg: `Daily send limit reached (${budget.sent}/${budget.limit}). Try again tomorrow.`,
+        },
+      ],
+    };
+    sendJobs.set(userId, job);
+    return job;
+  }
+
+  // Never exceed remaining daily budget
+  targets = targets.slice(0, budget.remaining);
+
   const job = {
     id: `send-${Date.now()}`,
     userId,
@@ -74,9 +101,17 @@ async function runSendQueueJob(userId, { slugs = [] } = {}) {
 
   try {
     await ensureLinkedInLoggedIn(page, context, paths.linkedinSession);
-    log(`Sending ${targets.length} queued message(s)…`);
+    log(
+      `Sending up to ${targets.length} message(s) · daily ${budget.sent}/${budget.limit} used · pause every ${budget.batchSize} for ${budget.batchPauseMinutes}m`
+    );
 
     for (let i = 0; i < targets.length; i += 1) {
+      const liveBudget = await getSendBudget(userId);
+      if (liveBudget.remaining <= 0) {
+        log('Daily send limit reached mid-run — stopping');
+        break;
+      }
+
       const profile = targets[i];
       job.current = profile.name || profile.slug;
       job.processed = i;
@@ -88,8 +123,10 @@ async function runSendQueueJob(userId, { slugs = [] } = {}) {
 
       if (result.ok && result.sent) {
         await db.profiles.markMessageSent(userId, profile.slug, { sentAt: result.sentAt });
+        await recordSuccessfulSend(userId);
         job.sent += 1;
         log(`[${i + 1}] sent`);
+        await maybeBatchPause(job.sent, log);
       } else if (result.dryRun) {
         await db.profiles.markMessageSent(userId, profile.slug, {
           error: 'Dry run — message not sent',
