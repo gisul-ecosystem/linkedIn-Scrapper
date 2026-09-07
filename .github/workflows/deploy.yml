@@ -32,17 +32,9 @@ jobs:
   build:
     name: Build and push
     runs-on: ubuntu-latest
-    outputs:
-      image: ${{ steps.meta.outputs.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Image tags
-        id: meta
-        run: |
-          echo "image=${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "latest=${IMAGE_NAME}:latest" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -60,8 +52,8 @@ jobs:
           push: true
           platforms: linux/amd64
           tags: |
-            ${{ steps.meta.outputs.image }}
-            ${{ steps.meta.outputs.latest }}
+            ${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -94,13 +86,16 @@ jobs:
 
       - name: Pull image and restart
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         with:
           host: ${{ secrets.VM_IP }}
           username: root
           password: ${{ secrets.VM_PASSWORD }}
           timeout: 60s
           command_timeout: 20m
-          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,DOCKER_IMAGE
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
           script: |
             set -euo pipefail
             cd /opt/scrapper
@@ -109,6 +104,9 @@ jobs:
               echo "Missing /opt/scrapper/.env — create it on the VM first"
               exit 1
             fi
+
+            export DOCKER_IMAGE="${{ secrets.DOCKERHUB_USERNAME }}/linkedin-scrapper:${{ github.sha }}"
+            echo "Deploying $DOCKER_IMAGE"
 
             echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
 
@@ -122,7 +120,3 @@ jobs:
             docker compose up -d --no-build --remove-orphans
             docker compose ps
             docker image prune -f
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
-          DOCKER_IMAGE: ${{ needs.build.outputs.image }}
