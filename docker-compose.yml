@@ -39,7 +39,7 @@ services:
       AI_MESSAGES: "true"
       RAG_TTL_MS: "86400000"
       RAG_TOP_K: "4"
-      RAG_MIN_SCORE: "60"
+      AI_CONFIDENCE_MIN_SCORE: "60"
       SEND_MESSAGES: "false"
     volumes:
       - app_auth:/app/.auth

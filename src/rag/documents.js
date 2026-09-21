@@ -4,7 +4,10 @@ const { ROOT } = require('../config');
 
 const KNOWLEDGE_DIR = path.join(ROOT, 'knowledge');
 
-function chunkText(text, { maxChars = 700, overlap = 80 } = {}) {
+/** Soft ceiling only when a ## section is huge; prefer keeping sections atomic. */
+const ATOMIC_SOFT_MAX = 2000;
+
+function chunkByParagraphs(text, { maxChars = 700, overlap = 80 } = {}) {
   const clean = String(text || '')
     .replace(/\r\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
@@ -39,6 +42,34 @@ function chunkText(text, { maxChars = 700, overlap = 80 } = {}) {
   return chunks;
 }
 
+/**
+ * Prefer ##-delimited sections as atomic chunks (keeps geography→client maps intact).
+ * Falls back to paragraph packing only when a section exceeds ATOMIC_SOFT_MAX.
+ */
+function chunkText(text, { maxChars = 700, overlap = 80 } = {}) {
+  const clean = String(text || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!clean) return [];
+
+  const sections = clean.split(/(?=^##\s)/m).map((s) => s.trim()).filter(Boolean);
+  if (sections.length <= 1) {
+    return chunkByParagraphs(clean, { maxChars, overlap });
+  }
+
+  const chunks = [];
+  for (const section of sections) {
+    if (section.length <= ATOMIC_SOFT_MAX) {
+      if (section.length >= 40) chunks.push(section);
+      else chunks.push(...chunkByParagraphs(section, { maxChars, overlap }));
+    } else {
+      chunks.push(...chunkByParagraphs(section, { maxChars, overlap }));
+    }
+  }
+  return chunks;
+}
+
 function loadKnowledgeDocuments() {
   if (!fs.existsSync(KNOWLEDGE_DIR)) return [];
 
@@ -62,4 +93,4 @@ function loadKnowledgeDocuments() {
   return docs;
 }
 
-module.exports = { loadKnowledgeDocuments, chunkText, KNOWLEDGE_DIR };
+module.exports = { loadKnowledgeDocuments, chunkText, chunkByParagraphs, KNOWLEDGE_DIR };

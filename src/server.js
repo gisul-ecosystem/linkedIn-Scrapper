@@ -15,11 +15,17 @@ const { getRagStatus, buildIndex } = require('./rag/index');
 const { getSendBudget } = require('./send-limits');
 const { writeDailySendReportExcel } = require('./export');
 const { ensureDirs } = require('./utils');
+const { parseConnectionFile } = require('./import-profiles');
+const multer = require('multer');
 const db = require('./db');
 
 const USER_ID = 'local';
 const NOVNC_UPSTREAM = { hostname: '127.0.0.1', port: 6080 };
 const BROWSER_VIEWER_PATH = '/vnc/vnc_lite.html?autoconnect=1&scale=true';
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 40 * 1024 * 1024 },
+});
 
 // Older Ubuntu noVNC uses scale=true (NOT resize=scale). Never CSS-scale the canvas.
 const NOVNC_FIT_CSS = `
@@ -364,7 +370,7 @@ app.get('/api/users', async (_req, res) => {
 app.get('/api/queue', async (_req, res) => {
   try {
     await db.connectMongo();
-    const items = await db.profiles.listQueue(USER_ID, { status: 'queued', limit: 500 });
+    const items = await db.profiles.listQueue(USER_ID, { status: 'queued', limit: 2000 });
     res.json({ items, count: items.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -535,6 +541,82 @@ app.post('/api/scrape/start', async (req, res) => {
   });
 });
 
+app.post('/api/scrape/import', upload.single('file'), async (req, res) => {
+  if (getJobStatus(USER_ID).status === 'running') {
+    return res.status(409).json({ error: 'Scrape already running' });
+  }
+  if (getSendJobStatus(USER_ID).status === 'running') {
+    return res.status(409).json({ error: 'Send job is running — wait until it finishes' });
+  }
+
+  const paths = userPaths(USER_ID);
+  if (!hasLinkedInSession(paths.linkedinSession)) {
+    return res.status(401).json({ error: 'Connect LinkedIn first' });
+  }
+
+  if (!req.file?.buffer?.length) {
+    return res.status(400).json({ error: 'Upload a CSV or Excel file that contains LinkedIn profile URLs' });
+  }
+
+  try {
+    await db.connectMongo();
+  } catch (err) {
+    return res.status(503).json({
+      error: `MongoDB not available: ${err.message}. Start local MongoDB first.`,
+    });
+  }
+
+  let profileUrls;
+  try {
+    profileUrls = await parseConnectionFile(req.file.buffer, req.file.originalname || '');
+  } catch (err) {
+    return res.status(400).json({ error: `Could not read file: ${err.message}` });
+  }
+
+  if (!profileUrls.length) {
+    return res.status(400).json({
+      error: 'No LinkedIn profile URLs found. Use a Connections export with a URL column, or any sheet containing linkedin.com/in/ links.',
+    });
+  }
+
+  let filters;
+  try {
+    filters = normalizeFilters({
+      maxResults: req.body?.maxResults,
+      startIndex: req.body?.startIndex,
+      aiMessages: req.body?.aiMessages,
+      rescrape: req.body?.rescrape,
+      sendMessages: false,
+    });
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  filters.sendMessages = false;
+  filters.connectionType = 'file_import';
+  filters.profileUrl = '';
+  filters.profileUrls = profileUrls;
+
+  res.json({
+    ok: true,
+    message: 'File import started — drafts will queue, nothing is sent',
+    found: profileUrls.length,
+    willProcess: Math.min(
+      Math.max(0, profileUrls.length - (filters.startIndex || 0)),
+      filters.maxResults || profileUrls.length
+    ),
+    filters: {
+      ...filters,
+      profileUrls: undefined,
+      sendMessages: false,
+    },
+  });
+
+  runScrapeJob(USER_ID, filters).catch((err) => {
+    console.error(`[scrape-import:${USER_ID}]`, err.message);
+  });
+});
+
 app.get('/api/job', (_req, res) => {
   res.json(getJobStatus(USER_ID));
 });
@@ -549,11 +631,12 @@ function normalizeFilters(raw) {
     title: String(raw.title || '').trim(),
     company: String(raw.company || '').trim(),
     location: String(raw.location || '').trim(),
-    maxResults: Math.max(0, Number(raw.maxResults || 50)),
+    maxResults: Math.min(2000, Math.max(0, Number(raw.maxResults || 50))),
     startIndex: Math.max(0, Number(raw.startIndex || 0)),
     sendMessages: raw.sendMessages === true || raw.sendMessages === 'true' || raw.autoSend === true,
     aiMessages: raw.aiMessages !== false && raw.aiMessages !== 'false',
-    rescrape: Boolean(raw.rescrape),
+    rescrape: raw.rescrape === true || raw.rescrape === 'true' || raw.rescrape === 'on',
+    profileUrls: Array.isArray(raw.profileUrls) ? raw.profileUrls : [],
   };
   if (raw.profileUrl && !profileUrl) {
     throw new Error('Invalid LinkedIn profile URL. Use https://www.linkedin.com/in/username');

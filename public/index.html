@@ -6,189 +6,168 @@
   <title>Gisul Outreach</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,500;8..60,600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="shell" id="appScreen">
-    <header class="topbar">
-      <div class="brand">
-        <div class="brand-mark">G</div>
-        <div>
-          <div class="brand-name">Gisul Outreach</div>
-          <div class="brand-sub" id="flowHint">Scrape → AI draft → send one-by-one</div>
-        </div>
-      </div>
-      <div class="topbar-meta">
-        <span class="pill warn" id="linkedInStatus">LinkedIn offline</span>
-        <span class="pill muted" id="sendBudgetPill">Sends today · —</span>
-        <span class="pill muted" id="mongoPill">Mongo…</span>
-      </div>
-    </header>
+  <header class="navbar">
+    <a class="brand" href="#run">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="22" height="22" fill="none">
+          <path d="M4 18.5L28 8l-7.2 16.4-5.1-4.6-4.4 3.2L4 18.5Z" fill="currentColor"/>
+        </svg>
+      </span>
+      <span class="brand-text">
+        <span class="brand-name">Gisul Outreach</span>
+        <span class="brand-sub" id="flowHint">Scrape → AI draft → queue for review</span>
+      </span>
+    </a>
+    <button class="nav-toggle" id="navToggle" type="button" aria-label="Open menu">
+      <span></span><span></span><span></span>
+    </button>
+    <nav class="nav-links" id="navLinks">
+      <a class="nav-link active" data-view="run" href="#run">Run</a>
+      <a class="nav-link" data-view="queue" href="#queue">Queue <span id="queueCount" class="count"></span></a>
+      <a class="nav-link" data-view="activity" href="#activity">Activity</a>
+      <a class="nav-link" data-view="profiles" href="#profiles">Profiles <span id="resultCount" class="count"></span></a>
+      <a class="nav-link" data-view="history" href="#history">History</a>
+      <a class="nav-link" data-view="session" href="#session">Session</a>
+    </nav>
+    <div class="nav-status">
+      <span class="pill warn" id="linkedInStatus">LinkedIn offline</span>
+      <span class="pill muted" id="sendBudgetPill">Sends today · —</span>
+      <span class="pill muted" id="mongoPill">Mongo…</span>
+    </div>
+  </header>
 
-    <section class="panel connect-panel" id="linkedInPanel">
-      <div class="panel-head">
+  <main class="app">
+    <section class="view active" id="view-run">
+      <div class="page-head">
         <div>
-          <h2>LinkedIn session</h2>
-          <p class="lede">Sign in once. Session stays until you logout.</p>
-        </div>
-        <div class="actions tight">
-          <button id="connectLinkedInBtn" class="btn primary" type="button">Connect</button>
-          <button id="backToLinkedInBtn" class="btn ghost" type="button" hidden>Back to LinkedIn</button>
-          <button id="logoutLinkedInBtn" class="btn ghost-danger" type="button" hidden>Logout</button>
-          <a id="openViewerBtn" class="btn primary" href="/viewer.html" target="_blank" rel="noopener" hidden>Open full viewer</a>
-          <button id="reloadViewerBtn" class="btn ghost" type="button" hidden>Reload panel</button>
+          <p class="eyebrow">Operations</p>
+          <h1>Run outreach</h1>
+          <p class="lede">Import a connections file or search LinkedIn. AI drafts stay in the queue until you send.</p>
         </div>
       </div>
-      <p class="hint" id="dockerLoginHint" hidden>
-        Running in Docker — click <strong>Open full viewer</strong> to sign in.
-        Prefer <strong>email + password</strong> (not Google).
-        Stuck on blank Google page? Click <strong>Back to LinkedIn</strong> (while Connect is running).
-      </p>
-      <p class="status-line" id="linkedInJobStatus"></p>
-      <div id="browserViewerWrap" class="viewer-wrap" hidden>
-        <iframe
-          id="browserViewer"
-          title="LinkedIn Chromium"
-          allow="clipboard-read; clipboard-write"
-          scrolling="no"
-        ></iframe>
+      <div class="workspace">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Target</h2>
+              <p class="lede">File import, one profile, or a connections search.</p>
+            </div>
+          </div>
+
+          <label class="toggle-row" for="autoSend">
+            <div>
+              <strong>Auto-send messages</strong>
+              <span class="hint">Max 60/day · pause 10 min after every 20. File imports never auto-send.</span>
+            </div>
+            <input id="autoSend" type="checkbox" />
+            <span class="switch" aria-hidden="true"></span>
+          </label>
+
+          <label class="field">
+            <span>Connections file <em>(CSV or Excel)</em></span>
+            <input id="connectionsFile" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+            <small class="hint">LinkedIn Connections export or any sheet with profile URLs. Drafts queue until Send to all.</small>
+            <small class="hint" id="fileHint"></small>
+          </label>
+
+          <label class="field">
+            <span>Direct profile URL <em>(optional — ignored if a file is selected)</em></span>
+            <input id="profileUrl" type="url" placeholder="https://www.linkedin.com/in/username" autocomplete="off" />
+          </label>
+
+          <label class="field">
+            <span>Connection type</span>
+            <select id="connectionType"></select>
+            <small id="typeDescription" class="hint"></small>
+          </label>
+
+          <div class="row">
+            <label class="field">
+              <span>Max profiles</span>
+              <input id="maxResults" type="number" min="1" max="2000" value="60" />
+              <small class="hint">How many URLs to scrape this run.</small>
+            </label>
+            <label class="field">
+              <span>Start index</span>
+              <input id="startIndex" type="number" min="0" value="0" />
+            </label>
+          </div>
+
+          <div class="option-stack">
+            <label class="check-row">
+              <input id="aiMessages" type="checkbox" checked />
+              <span>AI match + draft (Racko / KanonKode / Aaptor)</span>
+            </label>
+            <label class="check-row">
+              <input id="rescrape" type="checkbox" />
+              <span>Re-scrape profiles already in Mongo</span>
+            </label>
+          </div>
+
+          <p class="hint" id="aiHint"></p>
+          <p class="hint preview" id="previewUrl"></p>
+
+          <div class="actions">
+            <button id="startBtn" class="btn primary lg" disabled>Start</button>
+            <button id="refreshBtn" class="btn ghost" type="button">Refresh</button>
+            <button id="downloadBtn" class="btn ghost" type="button">Download Excel</button>
+          </div>
+        </section>
+
+        <section class="panel activity-panel">
+          <div class="panel-head">
+            <div>
+              <h2>Live flight</h2>
+              <p class="lede">Scrape and send progress.</p>
+            </div>
+          </div>
+
+          <div class="stat-grid">
+            <div class="stat">
+              <span class="stat-label">Scrape</span>
+              <strong id="jobStatus">idle</strong>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Progress</span>
+              <strong id="jobCounts">0 / 0</strong>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Sent this run</span>
+              <strong id="jobSent">0</strong>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Queue send</span>
+              <strong id="sendJobStatus">idle</strong>
+            </div>
+          </div>
+
+          <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+          <p class="status-line"><span class="muted">Current:</span> <span id="jobCurrent">—</span></p>
+          <ul id="jobLogs" class="logs"></ul>
+        </section>
       </div>
     </section>
 
-    <div class="workspace">
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <h2>Run</h2>
-            <p class="lede">Target profiles, then let AI match Racko / KanonKode / Aaptor.</p>
-          </div>
+    <section class="view" id="view-queue">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Outbound</p>
+          <h1>Message queue</h1>
+          <p class="lede">Review drafts, then send one-by-one with the existing delay and daily cap.</p>
         </div>
-
-        <label class="toggle-row" for="autoSend">
-          <div>
-            <strong>Auto-send messages</strong>
-            <span class="hint">Max 60/day · pause 10 min after every 20. Already-scraped profiles are skipped instantly so the next day continues where you left off.</span>
-          </div>
-          <input id="autoSend" type="checkbox" />
-          <span class="switch" aria-hidden="true"></span>
-        </label>
-
-        <label class="field">
-          <span>Direct profile URL <em>(optional)</em></span>
-          <input id="profileUrl" type="url" placeholder="https://www.linkedin.com/in/username" autocomplete="off" />
-        </label>
-
-        <label class="field">
-          <span>Connection type</span>
-          <select id="connectionType"></select>
-          <small id="typeDescription" class="hint"></small>
-        </label>
-
-        <div class="row">
-          <label class="field">
-            <span>Max profiles</span>
-            <input id="maxResults" type="number" min="1" max="500" value="60" />
-            <small class="hint">Tip: set to 60 with Auto-send — matches daily send cap.</small>
-          </label>
-          <label class="field">
-            <span>Start index</span>
-            <input id="startIndex" type="number" min="0" value="0" />
-          </label>
-        </div>
-
-        <div class="option-stack">
-          <label class="check-row">
-            <input id="aiMessages" type="checkbox" checked />
-            <span>AI match + draft (Racko / KanonKode / Aaptor)</span>
-          </label>
-          <label class="check-row">
-            <input id="rescrape" type="checkbox" />
-            <span>Re-scrape profiles already in Mongo</span>
-          </label>
-        </div>
-
-        <p class="hint" id="aiHint"></p>
-        <p class="hint preview" id="previewUrl"></p>
-
-        <div class="actions">
-          <button id="startBtn" class="btn primary lg" disabled>Start</button>
-          <button id="refreshBtn" class="btn ghost" type="button">Refresh</button>
-          <button id="downloadBtn" class="btn ghost" type="button">Download all Excel</button>
-        </div>
-
-        <div class="report-box">
-          <div class="report-title">Daily send report</div>
-          <p class="hint">Excel of who was messaged, which product, and the exact message — for a chosen day.</p>
-          <div class="row report-row">
-            <label class="field">
-              <span>Report date</span>
-              <input id="reportDate" type="date" />
-            </label>
-            <div class="actions tight report-actions">
-              <button id="dailyReportBtn" class="btn primary" type="button">Download daily Excel</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel activity-panel">
-        <div class="panel-head">
-          <div>
-            <h2>Live activity</h2>
-            <p class="lede">Scrape and send progress in one place.</p>
-          </div>
-        </div>
-
-        <div class="stat-grid">
-          <div class="stat">
-            <span class="stat-label">Scrape</span>
-            <strong id="jobStatus">idle</strong>
-          </div>
-          <div class="stat">
-            <span class="stat-label">Progress</span>
-            <strong id="jobCounts">0 / 0</strong>
-          </div>
-          <div class="stat">
-            <span class="stat-label">Sent this run</span>
-            <strong id="jobSent">0</strong>
-          </div>
-          <div class="stat">
-            <span class="stat-label">Queue send</span>
-            <strong id="sendJobStatus">idle</strong>
-          </div>
-        </div>
-
-        <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
-        <p class="status-line"><span class="muted">Current:</span> <span id="jobCurrent">—</span></p>
-        <ul id="jobLogs" class="logs"></ul>
-      </section>
-    </div>
-
-    <section class="panel">
-      <div class="tabs" role="tablist">
-        <button class="tab active" type="button" data-tab="activity">Activity feed</button>
-        <button class="tab" type="button" data-tab="queue">Manual queue <span id="queueCount" class="count"></span></button>
-        <button class="tab" type="button" data-tab="results">All scraped <span id="resultCount" class="count"></span></button>
-        <button class="tab" type="button" data-tab="history">History</button>
-      </div>
-
-      <div class="tab-panel active" id="tab-activity">
-        <p class="hint" id="activityModeHint">Auto-send is on — matches send immediately during the scrape.</p>
-        <div id="activityFeed" class="feed">
-          <div class="empty-state">Run a scrape to see sent / skipped profiles here.</div>
-        </div>
-      </div>
-
-      <div class="tab-panel" id="tab-queue">
-        <p class="hint">Only needed when Auto-send is off. Review drafts, then send selected or all.</p>
-        <div class="actions tight" style="margin-bottom:14px">
+        <div class="actions tight">
           <button id="loadQueueBtn" class="btn ghost" type="button">Refresh</button>
-          <button id="sendSelectedBtn" class="btn primary" type="button">Send selected</button>
-          <button id="sendAllBtn" class="btn ghost" type="button">Send all</button>
+          <button id="sendAllBtn" class="btn primary" type="button">Send to all</button>
+          <button id="sendSelectedBtn" class="btn ghost" type="button">Send selected</button>
           <button id="skipSelectedBtn" class="btn ghost" type="button">Skip selected</button>
           <button id="clearQueueBtn" class="btn ghost-danger" type="button">Clear queue</button>
         </div>
+      </div>
+      <section class="panel">
         <div class="table-wrap">
           <table>
             <thead>
@@ -207,13 +186,35 @@
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
+    </section>
 
-      <div class="tab-panel" id="tab-results">
-        <div class="actions tight" style="margin-bottom:14px">
+    <section class="view" id="view-activity">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Feed</p>
+          <h1>Activity</h1>
+          <p class="lede" id="activityModeHint">Auto-send is off — drafts wait in Queue until you send.</p>
+        </div>
+      </div>
+      <div id="activityFeed" class="feed">
+        <div class="empty-state">Run a scrape to see sent / skipped profiles here.</div>
+      </div>
+    </section>
+
+    <section class="view" id="view-profiles">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Database</p>
+          <h1>Scraped profiles</h1>
+          <p class="lede">Everyone stored in Mongo from scrapes and file imports.</p>
+        </div>
+        <div class="actions tight">
           <button id="loadResultsBtn" class="btn ghost" type="button">Refresh</button>
         </div>
-        <div class="table-wrap">
+      </div>
+      <section class="panel">
+        <div class="table-wrap tall">
           <table>
             <thead>
               <tr>
@@ -230,29 +231,95 @@
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
+    </section>
 
-      <div class="tab-panel" id="tab-history">
-        <p class="hint" id="mongoHint">Jobs stored in MongoDB.</p>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Job ID</th>
-                <th>Status</th>
-                <th>Processed</th>
-                <th>Started</th>
-                <th>Finished</th>
-              </tr>
-            </thead>
-            <tbody id="jobsBody">
-              <tr><td colspan="5" class="empty">No jobs yet</td></tr>
-            </tbody>
-          </table>
+    <section class="view" id="view-history">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Records</p>
+          <h1>History &amp; reports</h1>
+          <p class="lede" id="mongoHint">Jobs stored in MongoDB.</p>
         </div>
       </div>
+      <div class="split">
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Daily send report</h2>
+              <p class="lede">Excel of who was messaged, which product, and the exact message.</p>
+            </div>
+          </div>
+          <div class="row report-row">
+            <label class="field">
+              <span>Report date</span>
+              <input id="reportDate" type="date" />
+            </label>
+            <div class="actions tight report-actions">
+              <button id="dailyReportBtn" class="btn primary" type="button">Download daily Excel</button>
+            </div>
+          </div>
+        </section>
+        <section class="panel">
+          <div class="panel-head">
+            <div>
+              <h2>Job log</h2>
+              <p class="lede">Recent scrape runs.</p>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Job ID</th>
+                  <th>Status</th>
+                  <th>Processed</th>
+                  <th>Started</th>
+                  <th>Finished</th>
+                </tr>
+              </thead>
+              <tbody id="jobsBody">
+                <tr><td colspan="5" class="empty">No jobs yet</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
     </section>
-  </div>
+
+    <section class="view" id="view-session">
+      <div class="page-head">
+        <div>
+          <p class="eyebrow">Account</p>
+          <h1>LinkedIn session</h1>
+          <p class="lede">Sign in once. Session stays until you logout.</p>
+        </div>
+        <div class="actions tight">
+          <button id="connectLinkedInBtn" class="btn primary" type="button">Connect</button>
+          <button id="backToLinkedInBtn" class="btn ghost" type="button" hidden>Back to LinkedIn</button>
+          <button id="logoutLinkedInBtn" class="btn ghost-danger" type="button" hidden>Logout</button>
+          <a id="openViewerBtn" class="btn primary" href="/viewer.html" target="_blank" rel="noopener" hidden>Open full viewer</a>
+          <button id="reloadViewerBtn" class="btn ghost" type="button" hidden>Reload panel</button>
+        </div>
+      </div>
+      <section class="panel connect-panel" id="linkedInPanel">
+        <p class="hint" id="dockerLoginHint" hidden>
+          Running in Docker — click <strong>Open full viewer</strong> to sign in.
+          Prefer <strong>email + password</strong> (not Google).
+          Stuck on a blank Google page? Click <strong>Back to LinkedIn</strong> while Connect is running.
+        </p>
+        <p class="status-line" id="linkedInJobStatus"></p>
+        <div id="browserViewerWrap" class="viewer-wrap" hidden>
+          <iframe
+            id="browserViewer"
+            title="LinkedIn Chromium"
+            allow="clipboard-read; clipboard-write"
+            scrolling="no"
+          ></iframe>
+        </div>
+      </section>
+    </section>
+  </main>
 
   <script src="/app.js"></script>
 </body>

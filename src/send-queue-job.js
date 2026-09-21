@@ -35,7 +35,7 @@ async function runSendQueueJob(userId, { slugs = [] } = {}) {
       if (p) targets.push(p);
     }
   } else {
-    targets = await db.profiles.listQueue(userId, { status: 'queued', limit: 500 });
+    targets = await db.profiles.listQueue(userId, { status: 'queued', limit: 2000 });
   }
 
   targets = targets.filter((p) => p.aiMessage && !p.messageSent && p.relevant !== false);

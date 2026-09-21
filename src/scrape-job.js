@@ -44,7 +44,10 @@ async function runScrapeJob(userId, filters, onProgress) {
     id: jobId,
     userId,
     status: 'running',
-    filters,
+    filters: {
+      ...filters,
+      profileUrls: Array.isArray(filters.profileUrls) ? filters.profileUrls.length : undefined,
+    },
     startedAt: new Date().toISOString(),
     processed: 0,
     total: 0,
@@ -73,10 +76,38 @@ async function runScrapeJob(userId, filters, onProgress) {
   ensureDirs(paths.outDir);
   const { normalizeProfileUrl } = require('./utils');
   const directProfileUrl = normalizeProfileUrl(filters.profileUrl || '');
+  const importedRows = Array.isArray(filters.profileUrls) ? filters.profileUrls : [];
+  const importedConns = [];
+  const importedSeen = new Set();
+  for (const row of importedRows) {
+    const raw = typeof row === 'string' ? row : (row?.profileUrl || row?.url || '');
+    const profileUrl = normalizeProfileUrl(raw);
+    const slug = slugFromProfileUrl(profileUrl);
+    if (!profileUrl || !slug || importedSeen.has(slug)) continue;
+    importedSeen.add(slug);
+    importedConns.push({
+      profileUrl,
+      listName:
+        (typeof row === 'object' && (row.listName || row.name)) || nameFromSlug(slug),
+      subtitle: (typeof row === 'object' && (row.subtitle || row.company)) || '',
+      headline: (typeof row === 'object' && (row.headline || row.position || row.jobTitle)) || '',
+    });
+  }
+  const usingImport = importedConns.length > 0;
   filters = {
     ...filters,
-    profileUrl: directProfileUrl,
-    connectionType: directProfileUrl ? 'single_profile' : resolveConnectionType(filters),
+    profileUrl: usingImport ? '' : directProfileUrl,
+    profileUrls: usingImport ? importedConns : [],
+    connectionType: usingImport
+      ? 'file_import'
+      : directProfileUrl
+        ? 'single_profile'
+        : resolveConnectionType(filters),
+    sendMessages: usingImport ? false : Boolean(filters.sendMessages),
+  };
+  job.filters = {
+    ...filters,
+    profileUrls: usingImport ? importedConns.length : undefined,
   };
 
   const useAi = filters.aiMessages ?? AI_MESSAGES;
@@ -96,13 +127,17 @@ async function runScrapeJob(userId, filters, onProgress) {
   try {
     await ensureLinkedInLoggedIn(page, context, paths.linkedinSession);
 
-    if (directProfileUrl) {
+    if (usingImport) {
+      await log(`Mode: file import | ${importedConns.length} URL(s) in spreadsheet`);
+    } else if (directProfileUrl) {
       await log(`Mode: single profile | ${directProfileUrl}`);
     } else {
       await log(`Mode: ${filters.connectionType} | ${buildSearchUrl(filters)}`);
     }
     if (useAi) await log('AI product matching: Racko + KanonKode + Aaptor (RAG)');
-    if (autoSend) {
+    if (usingImport) {
+      await log('File import — drafts go to queue only. Nothing is sent until Send to all.');
+    } else if (autoSend) {
       await log('Auto-send ON — matched profiles will be messaged one-by-one after AI draft');
     } else {
       await log('Auto-send OFF — drafts go to queue for manual send');
@@ -110,7 +145,10 @@ async function runScrapeJob(userId, filters, onProgress) {
     await log(`MongoDB tracking enabled for owner=${userId}`);
 
     let connections;
-    if (directProfileUrl) {
+    if (usingImport) {
+      connections = importedConns;
+      await log(`File import targets: ${connections.length} unique profile URL(s)`);
+    } else if (directProfileUrl) {
       const slug = slugFromProfileUrl(directProfileUrl);
       connections = [
         {
@@ -144,15 +182,19 @@ async function runScrapeJob(userId, filters, onProgress) {
       connections = pending;
     }
 
-    const offset = directProfileUrl ? 0 : startIndex;
+    const applyWindow = usingImport || !directProfileUrl;
+    const offset = applyWindow ? startIndex : 0;
     const sliced =
-      !directProfileUrl && maxConnections > 0
+      applyWindow && maxConnections > 0
         ? connections.slice(offset, offset + maxConnections)
         : connections.slice(offset);
 
     job.total = sliced.length;
     job.skippedKnown = skippedKnown;
-    await db.jobs.updateScrapeJob(jobId, { total: job.total, filters });
+    await db.jobs.updateScrapeJob(jobId, {
+      total: job.total,
+      filters: job.filters,
+    });
     await log(`This run will process ${sliced.length} profile(s)`);
 
     let sendBudget = await getSendBudget(userId);

@@ -28,7 +28,7 @@ function syncAutoSendUi() {
     : 'Scrape → AI draft → queue for review';
   $('activityModeHint').textContent = on
     ? 'Auto-send is on — matches are messaged immediately during the scrape.'
-    : 'Auto-send is off — drafts wait in Manual queue until you send.';
+    : 'Auto-send is off — drafts wait in Queue until you send.';
 }
 
 function getFilters() {
@@ -62,6 +62,7 @@ async function initApp() {
   loadQueue().catch(() => {});
   loadJobs().catch(() => {});
   loadActivity().catch(() => {});
+  showView((location.hash || '#run').replace('#', '') || 'run');
   startPolling();
 }
 
@@ -192,6 +193,11 @@ function updateTypeDescription() {
 async function updatePreviewUrl() {
   try {
     const filters = getFilters();
+    const file = $('connectionsFile')?.files?.[0];
+    if (file) {
+      $('previewUrl').textContent = `File import · ${file.name} · scrape URLs · queue only (no send)`;
+      return;
+    }
     if (filters.profileUrl) {
       $('previewUrl').textContent = `Single profile · ${filters.profileUrl}`;
       return;
@@ -293,7 +299,45 @@ async function logoutLinkedIn() {
   }
 }
 
+async function startFileImport(file) {
+  const maxResults = Number($('maxResults').value) || 60;
+  const startIndex = Number($('startIndex').value) || 0;
+  if (
+    !confirm(
+      `Import "${file.name}" and scrape up to ${maxResults} profile(s) from the file URLs?\n\nMessages will stay in the queue. Nothing is sent until you click Send to all.`
+    )
+  ) {
+    return;
+  }
+
+  $('startBtn').disabled = true;
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('maxResults', String(maxResults));
+    fd.append('startIndex', String(startIndex));
+    fd.append('aiMessages', String($('aiMessages').checked));
+    fd.append('rescrape', String($('rescrape').checked));
+    const res = await fetch('/api/scrape/import', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    if ($('fileHint') && data.found != null) {
+      $('fileHint').textContent = `${file.name} · ${data.found} URL(s) found · scraping up to ${data.willProcess}`;
+    }
+    showView('run');
+  } catch (err) {
+    alert(err.message);
+    $('startBtn').disabled = false;
+  }
+}
+
 async function startScrape() {
+  const file = $('connectionsFile')?.files?.[0];
+  if (file) {
+    await startFileImport(file);
+    return;
+  }
+
   const filters = getFilters();
   if (filters.sendMessages && !filters.aiMessages) {
     alert('Turn on AI match + draft to auto-send messages.');
@@ -309,7 +353,7 @@ async function startScrape() {
   $('startBtn').disabled = true;
   try {
     await api('/api/scrape/start', { method: 'POST', body: JSON.stringify(filters) });
-    document.querySelector('.tab[data-tab="activity"]')?.click();
+    showView('run');
   } catch (err) {
     alert(err.message);
     $('startBtn').disabled = false;
@@ -429,10 +473,23 @@ async function sendSlugs(slugs) {
 }
 
 async function sendAllQueued() {
+  const count = queueItems.length;
+  if (!count) {
+    alert('Queue is empty');
+    return;
+  }
+  if (
+    !confirm(
+      `Send to all ${count} queued message(s), one-by-one?\n\nUses the existing delay between sends and the daily send limit.`
+    )
+  ) {
+    return;
+  }
   try {
     const all = queueItems.map((p) => p.slug);
     await saveEditedMessages(all);
     await api('/api/queue/send', { method: 'POST', body: JSON.stringify({ slugs: [] }) });
+    showView('run');
   } catch (err) {
     alert(err.message);
   }
@@ -525,6 +582,21 @@ function esc(str) {
     .replace(/"/g, '&quot;');
 }
 
+function showView(name) {
+  const allowed = ['run', 'queue', 'activity', 'profiles', 'history', 'session'];
+  if (!allowed.includes(name)) name = 'run';
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `view-${name}`));
+  document.querySelectorAll('.nav-link').forEach((a) => a.classList.toggle('active', a.dataset.view === name));
+  $('navLinks')?.classList.remove('open');
+  if (location.hash !== `#${name}`) {
+    history.replaceState(null, '', `#${name}`);
+  }
+  if (name === 'queue') loadQueue().catch(() => {});
+  if (name === 'profiles') loadResults().catch(() => {});
+  if (name === 'history') loadJobs().catch(() => {});
+  if (name === 'activity') loadActivity().catch(() => {});
+}
+
 function startPolling() {
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
@@ -554,13 +626,20 @@ function startPolling() {
   }, 2500);
 }
 
-document.querySelectorAll('.tab').forEach((tab) => {
-  tab.addEventListener('click', () => {
-    document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
-    document.querySelectorAll('.tab-panel').forEach((p) => p.classList.remove('active'));
-    tab.classList.add('active');
-    $(`tab-${tab.dataset.tab}`)?.classList.add('active');
+$('navToggle')?.addEventListener('click', () => {
+  $('navLinks')?.classList.toggle('open');
+});
+
+document.querySelectorAll('.nav-link').forEach((link) => {
+  link.addEventListener('click', (e) => {
+    e.preventDefault();
+    showView(link.dataset.view);
   });
+});
+
+window.addEventListener('hashchange', () => {
+  const name = (location.hash || '#run').replace('#', '') || 'run';
+  showView(name);
 });
 
 $('autoSend')?.addEventListener('change', syncAutoSendUi);
@@ -568,6 +647,35 @@ $('autoSend')?.addEventListener('change', syncAutoSendUi);
 ['connectionType', 'maxResults', 'startIndex', 'profileUrl'].forEach((id) => {
   $(id).addEventListener('input', updatePreviewUrl);
   $(id).addEventListener('change', updatePreviewUrl);
+});
+
+$('connectionsFile')?.addEventListener('change', async () => {
+  const file = $('connectionsFile')?.files?.[0];
+  const hint = $('fileHint');
+  if (!hint) return;
+  if (!file) {
+    hint.textContent = '';
+    updatePreviewUrl();
+    return;
+  }
+  hint.textContent = `Selected ${file.name}`;
+  const max = Number($('maxResults').value) || 60;
+  if (/\.csv$/i.test(file.name) || /csv|plain/.test(file.type || '')) {
+    try {
+      const text = await file.text();
+      const re = /https?:\/\/(?:www\.)?linkedin\.com\/in\/[^\s,"'<>]+/gi;
+      const seen = new Set();
+      for (const m of text.match(re) || []) {
+        seen.add(m.toLowerCase().replace(/\/$/, ''));
+      }
+      hint.textContent = `${file.name} · ${seen.size} LinkedIn URL(s) found · this run will scrape up to ${max}`;
+    } catch {
+      hint.textContent = `${file.name} selected`;
+    }
+  } else {
+    hint.textContent = `${file.name} · Excel — URLs are counted when you click Start. Max profiles still applies.`;
+  }
+  updatePreviewUrl();
 });
 
 $('connectLinkedInBtn').addEventListener('click', connectLinkedIn);

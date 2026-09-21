@@ -32,7 +32,11 @@ const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-4-5-20250929';
 const AI_MESSAGES = String(process.env.AI_MESSAGES || 'true').toLowerCase() === 'true';
 const RAG_TTL_MS = Math.max(60_000, Number(process.env.RAG_TTL_MS || 24 * 60 * 60 * 1000)); // 1 day
 const RAG_TOP_K = Math.max(1, Number(process.env.RAG_TOP_K || 4));
-const RAG_MIN_SCORE = Math.max(0, Number(process.env.RAG_MIN_SCORE || 60));
+// Model relevanceScore gate (0–100) — not a RAG cosine floor. RAG_MIN_SCORE kept as legacy alias.
+const AI_CONFIDENCE_MIN_SCORE = Math.max(
+  0,
+  Number(process.env.AI_CONFIDENCE_MIN_SCORE || process.env.RAG_MIN_SCORE || 60)
+);
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const MONGODB_DB = process.env.MONGODB_DB || 'linkedin_scrapper';
 const MONGODB_ATLAS_URI =
@@ -75,7 +79,9 @@ module.exports = {
   AI_MESSAGES,
   RAG_TTL_MS,
   RAG_TOP_K,
-  RAG_MIN_SCORE,
+  AI_CONFIDENCE_MIN_SCORE,
+  /** @deprecated use AI_CONFIDENCE_MIN_SCORE */
+  RAG_MIN_SCORE: AI_CONFIDENCE_MIN_SCORE,
   MONGODB_URI,
   MONGODB_DB,
   MONGODB_ATLAS_URI,

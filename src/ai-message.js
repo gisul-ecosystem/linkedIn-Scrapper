@@ -3,14 +3,13 @@ const {
   CLAUDE_MODEL,
   OPENAI_API_KEY,
   OPENAI_MODEL,
-  RAG_MIN_SCORE,
+  AI_CONFIDENCE_MIN_SCORE,
 } = require('./config');
 const { getProduct, listProducts, parseProductIds } = require('./products');
 const { firstName } = require('./utils');
 const { retrieveForProfile } = require('./rag/index');
 const {
   sanitizeHeadline,
-  shortRolePhrase,
   cleanCompanyName,
   cleanRoleTitle,
   companyFromAtPhrase,
@@ -60,17 +59,24 @@ function gisulComboLine(ids) {
   return `Gisul runs both: ${names.join(' and ')} — standalone or as one system.`;
 }
 
+/**
+ * Named-client proof from geography-proof.md anchors.
+ * Returns a short noun phrase of client names when possible.
+ * Regional fallbacks are full noun phrases that already contain "across" —
+ * never prepend "including" to those (see proofIncluding / fallback templates).
+ */
 function proofFor(productId, geo) {
   const g = geo || 'india';
   if (productId === 'racko') {
     if (g === 'india') return 'Manipal Global and StratiformAI';
+    // No named Racko clients outside India in knowledge — regional NP only
     return 'EdTech and enterprise clients across Asia and the Middle East';
   }
   if (productId === 'kanonkode') {
     if (g === 'malaysia') return 'RHB Bank, PTPTN Malaysia, and Virtual Calibre';
     if (g === 'singapore') return 'Aventis Learning Group, Changi Group, and National Insurance Singapore';
     if (g === 'uae') return 'TechMantra Gulf and SIG Combibloc Obeikan FZCO';
-    if (g === 'usa') return 'Y&L Consulting and enterprise teams across the US';
+    if (g === 'usa') return 'Y&L Consulting, Kalopsee, and Meridian Technology';
     if (g === 'south_africa') return 'Praxis Computing';
     return 'Dassault Systèmes, Sigmoid, and FinCare Small Finance Bank';
   }
@@ -78,6 +84,19 @@ function proofFor(productId, geo) {
     return 'Sutherland and Graymatter';
   }
   return 'Sutherland and Dassault Systèmes';
+}
+
+/** True when proof is already a regional clause (do not glue "including" in front). */
+function isRegionalProof(proof) {
+  return /\bacross\b/i.test(String(proof || ''));
+}
+
+/** "including X" only when X is a named-client list. */
+function proofIncluding(proof) {
+  const p = String(proof || '').trim();
+  if (!p) return '';
+  if (isRegionalProof(p)) return p;
+  return `including ${p}`;
 }
 
 function resolveProductFromParsed(parsed) {
@@ -112,10 +131,6 @@ function buildFallbackMessage(profile, productId, { relevant = true, reason } = 
     cleanCompanyName(profile.company || '') ||
     companyFromAtPhrase(profile.jobTitle || profile.headline || '') ||
     'your organisation';
-  const role = shortRolePhrase({
-    ...profile,
-    company: company === 'your organisation' ? '' : company,
-  });
   const geo = detectGeography(profile);
   const ids = product.productIds || parseProductIds(product.id);
   const primary = ids[0] || product.id;
@@ -127,20 +142,25 @@ function buildFallbackMessage(profile, productId, { relevant = true, reason } = 
 
   let body;
   if (ids.length >= 3) {
+    const stackProof = isRegionalProof(proof)
+      ? `Already live with ${proof}.`
+      : `${proof} run across the stack.`;
     body = `Hi ${name}, scaling ${company} — at some point infra, team capability, and hiring pipeline all become constraints simultaneously.
 
-Gisul runs an integrated stack: Racko for private cloud infrastructure, KanonKode for enterprise upskilling, Aaptor for AI-driven assessments and hiring. Each works standalone — or as one system. ${proof} run across the stack.
+Gisul runs an integrated stack: Racko for private cloud infrastructure, KanonKode for enterprise upskilling, Aaptor for AI-driven assessments and hiring. Each works standalone — or as one system. ${stackProof}
 
 Worth a conversation?
 
 ${signOff(profile)}`;
   } else if (ids.length === 2) {
-    const opener = role
-      ? `Hi ${name}, at ${company}'s scale — ${role} usually means more than one system that should reinforce each other.`
-      : `Hi ${name}, at ${company}'s scale, more than one system should typically reinforce each other.`;
-    body = `${opener}
+    const comboProof = isRegionalProof(proof)
+      ? `Already live with ${proof}.`
+      : `${proof} are already running this combination.`;
+    body = `Hi ${name},
 
-${gisulComboLine(ids)} ${proof} are already running this combination.
+At ${company}'s scale, more than one system should typically reinforce each other.
+
+${gisulComboLine(ids)} ${comboProof}
 
 Happy to share how it's structured. Interested?
 
@@ -148,9 +168,12 @@ ${urlLine}
 
 ${signOff(profile)}`;
   } else if (primary === 'racko') {
+    const rackoProof = isRegionalProof(proof)
+      ? `we own the hardware, 30K+ CPUs provisioned for ${proof}`
+      : `we own the hardware, 30K+ CPUs provisioned across EdTech and AI clients ${proofIncluding(proof)}`;
     body = `Hi ${name}, running compute infrastructure for ${company} at scale — dedicated resource control and uptime probably matter more than hyperscaler flexibility at this point.
 
-Racko (racko.ai) is Gisul's managed private cloud — we own the hardware, 30K+ CPUs provisioned across EdTech and AI clients including ${proof}. Not reselling AWS or Azure.
+Racko (racko.ai) is Gisul's managed private cloud — ${rackoProof}. Not reselling AWS or Azure.
 
 Happy to show you what the setup looks like. Worth a quick exchange?
 
@@ -164,9 +187,12 @@ If this is on your roadmap, happy to share what's worked.
 
 ${signOff(profile)}`;
   } else {
+    const aaptorProof = isRegionalProof(proof)
+      ? `Running for ${proof} right now`
+      : `Running for ${proof}'s hiring programmes right now`;
     body = `Hi ${name}, at ${company}'s hiring volumes, first-round screening likely takes far more bandwidth than the signal it generates.
 
-Aaptor (aaptor.com) is Gisul's AI interview and assessment platform — voice AI interviews, live proctoring, competency evaluation. Running for ${proof}'s hiring programmes right now.
+Aaptor (aaptor.com) is Gisul's AI interview and assessment platform — voice AI interviews, live proctoring, competency evaluation. ${aaptorProof}.
 
 Worth a quick exchange to see if it fits your current setup?
 
@@ -331,8 +357,11 @@ If proceed=false / NO FIT: relevant=false, message="", productId=null.
 ## MESSAGE RULES (proceed=true only)
 - Under 120 words. Cut context before cutting CTA.
 - Already 1st connections — do NOT re-introduce or mention the connection.
-- Open with a clean company name + short role (e.g. L&D Manager). Never paste raw headline, education, or duplicated employer text (SynechronSynechron, "Jain (Deemed-to-be Univ").
-- Sparse profile → industry + role + company size. If company is missing, say "your organisation".
+- First line MUST be only "Hi {FirstName}," — nothing else on that line.
+- NEVER write "{Name}, {Title} at {Company}." or "Hi {Name}, VP at …" — they already know their job. Do not recap title/company as a greeting label.
+- After the greeting, go straight into the problem or product. You may mention the company later in a normal sentence (e.g. "at Bellfast's hiring volumes") — never as a role dump.
+- Never paste raw headline, education, or duplicated employer text (SynechronSynechron, "Jain (Deemed-to-be Univ").
+- Sparse profile → skip title recap; use industry or company only inside the pitch. If company is missing, say "your organisation".
 - Single brand: one product, one geo/sector proof point, one pain. Frame as Gisul's platform (e.g. "KanonKode is Gisul's enterprise upskilling…").
 - Combined (two products): one shared problem. Lead with Gisul as the parent, then the two platforms — e.g. "Gisul runs both: KanonKode for enterprise upskilling and Aaptor for AI assessments — standalone or as one system." Never present two products as unrelated brands.
 - Ecosystem: Gisul's integrated stack — not three products listed as separate companies.
@@ -343,7 +372,7 @@ If proceed=false / NO FIT: relevant=false, message="", productId=null.
 - Peer-to-peer, informed, direct. Not salesy.
 
 ## NEVER WRITE
-"I hope you are doing great/well", "I'm reaching out because/from", "I came across/noticed your profile", "Would love to/I wanted to", "We are a leading provider of", "Exciting opportunity/synergies/potential alignment", "Your work stands out/caught my attention", "Customised upskilling programs", "Reaching out to explore", "I noticed", duplicated company names, university/education fragments in the opener.`;
+"I hope you are doing great/well", "I'm reaching out because/from", "I came across/noticed your profile", "Would love to/I wanted to", "We are a leading provider of", "Exciting opportunity/synergies/potential alignment", "Your work stands out/caught my attention", "Customised upskilling programs", "Reaching out to explore", "I noticed", duplicated company names, university/education fragments in the opener, "{Name}, {Title} at {Company}."`;
 }
 
 function userPrompt(profile, rag) {
@@ -384,7 +413,48 @@ function wordCount(s) {
     .filter(Boolean).length;
 }
 
-function sanitizeOutboundMessage(message, profile, product) {
+const TITLE_DUMP_RE =
+  /\b(VP|SVP|EVP|AVP|CEO|CTO|CIO|COO|CFO|CHRO|CLO|CPO|CXO|Head|Director|Manager|Founder|President|Vice President|Lead|Specialist|Officer|Partner|Consultant|Training)\b/i;
+
+/**
+ * Kill role-dump openers:
+ * - "Somashekar, VP at Bellfast Management."
+ * - "Mitesh — Training Manager, HSBC"
+ * - "Hi Sanjana, Head of TA, Acme"
+ */
+function stripRoleDumpOpener(message, profile) {
+  const name = firstName(profile?.name);
+  if (!name) return String(message || '').trim();
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const text = String(message || '').trim();
+  const nl = text.search(/\r?\n/);
+  const first = (nl === -1 ? text : text.slice(0, nl)).trim();
+  const rest = nl === -1 ? '' : text.slice(nl).replace(/^\s+/, '\n\n');
+  const addressesThem = new RegExp(`^(?:Hi\\s+)?${escaped}\\b`, 'i').test(first);
+  // Name then title via "at", em/en dash, hyphen, or comma (not only "at")
+  const nameThenTitleSep = new RegExp(
+    `^(?:Hi\\s+)?${escaped}\\s*[,:—–-]\\s*.+`,
+    'i'
+  );
+  const hasTitleSeparator =
+    /\bat\b/i.test(first) ||
+    /[—–]/.test(first) ||
+    nameThenTitleSep.test(first);
+  const looksLikeTitleDump =
+    first.length <= 100 &&
+    addressesThem &&
+    TITLE_DUMP_RE.test(first) &&
+    hasTitleSeparator &&
+    !/\?/.test(first) &&
+    !/\b(scale|hiring|volumes|building|running|capability|infrastructure|worth|interested|happy to)\b/i.test(
+      first
+    );
+
+  if (!looksLikeTitleDump) return text;
+  return `Hi ${name},${rest || '\n\n'}`.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function sanitizeOutboundMessage(message, profile, product, { enforceLength = true } = {}) {
   let msg = String(message || '').trim();
   if (!msg) return '';
 
@@ -400,12 +470,14 @@ function sanitizeOutboundMessage(message, profile, product) {
     .replace(/\n{3,}/g, '\n\n')
     .trim();
 
+  msg = stripRoleDumpOpener(msg, profile);
+
   if (BANNED_PHRASE_RE.test(msg) || /Contact info|Book an appointment|mutual connections|Hiring:/i.test(msg)) {
     return buildFallbackMessage(profile, product?.id || 'kanonkode').message;
   }
 
-  // Soft trim if wildly over ~120 words
-  if (wordCount(msg) > 140) {
+  // Hard cutoff only — 120–140 handled via compression pass in generateOutreachMessage
+  if (enforceLength && wordCount(msg) > 140) {
     return buildFallbackMessage(profile, product?.id || 'kanonkode').message;
   }
 
@@ -414,6 +486,48 @@ function sanitizeOutboundMessage(message, profile, product) {
   }
 
   return msg.slice(0, 1200);
+}
+
+async function compressMessage(message, { useClaude }) {
+  const system =
+    'You compress LinkedIn first-messages. Return ONLY the shortened message text — no JSON, no quotes, no commentary.';
+  const user = `Rewrite this LinkedIn DM to under 120 words. Keep: greeting, product/Gisul framing, one proof point, CTA, sign-off, and any URLs. Cut context and repetition first. Do not add fluff.
+
+MESSAGE:
+${message}`;
+
+  const raw = useClaude ? await callClaude(system, user) : await callOpenAICompress(system, user);
+  return String(raw || '')
+    .replace(/^```(?:\w+)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
+/** OpenAI without forcing JSON (compression returns plain text). */
+async function callOpenAICompress(system, user) {
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+    }),
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`OpenAI compress ${res.status}: ${errText.slice(0, 300)}`);
+  }
+
+  const data = await res.json();
+  return data.choices?.[0]?.message?.content || '';
 }
 
 async function callClaude(system, user) {
@@ -500,14 +614,15 @@ function formatDecision(parsed, product, score) {
 
 async function generateOutreachMessage(profile) {
   const cleaned = cleanProfileForAi(profile);
-  const rag = retrieveForProfile(cleaned);
+  const heuristicFirst = heuristicProductId(cleaned);
+  const preferProducts = parseProductIds(heuristicFirst);
+  const rag = retrieveForProfile(cleaned, { preferProducts });
   const system = systemPrompt();
   const user = userPrompt(cleaned, rag);
   logAiInput(cleaned);
 
   const hasClaude = Boolean(ANTHROPIC_API_KEY);
   const hasOpenAI = Boolean(OPENAI_API_KEY);
-  const heuristicFirst = heuristicProductId(cleaned);
 
   if (!hasClaude && !hasOpenAI) {
     if (!heuristicFirst) {
@@ -545,7 +660,7 @@ async function generateOutreachMessage(profile) {
       return fallback;
     }
 
-    if (!proceed || score < RAG_MIN_SCORE || !product) {
+    if (!proceed || score < AI_CONFIDENCE_MIN_SCORE || !product) {
       formatDecision({ ...parsed, proceed: false }, null, score);
       console.log(
         `[ai] decision: relevant=false score=${score} reason=${String(parsed.reason || parsed.fitReason || '').slice(0, 140)}`
@@ -567,12 +682,40 @@ async function generateOutreachMessage(profile) {
         message: '',
         rag: {
           builtAt: rag.builtAt,
+          preferProducts,
           topChunks: rag.chunks.map((c) => ({ id: c.id, productId: c.productId, score: c.score })),
         },
       };
     }
 
-    const message = sanitizeOutboundMessage(parsed.message, cleaned, product);
+    let message = sanitizeOutboundMessage(parsed.message, cleaned, product, {
+      enforceLength: false,
+    });
+    let wc = wordCount(message);
+
+    if (wc > 140) {
+      console.warn(`[ai] message ${wc} words > 140 — heuristic fallback`);
+      message = buildFallbackMessage(cleaned, product.id).message;
+    } else if (wc > 120) {
+      try {
+        console.log(`[ai] message ${wc} words — one-shot compression`);
+        const compressed = await compressMessage(message, { useClaude: hasClaude });
+        message = sanitizeOutboundMessage(compressed, cleaned, product, {
+          enforceLength: false,
+        });
+        wc = wordCount(message);
+        if (wc > 140) {
+          console.warn(`[ai] still ${wc} words after compress — heuristic fallback`);
+          message = buildFallbackMessage(cleaned, product.id).message;
+        } else {
+          console.log(`[ai] compressed to ${wc} words`);
+        }
+      } catch (compressErr) {
+        console.warn(`[ai] compress failed: ${compressErr.message} — heuristic fallback`);
+        message = buildFallbackMessage(cleaned, product.id).message;
+      }
+    }
+
     formatDecision(parsed, product, score);
     console.log(
       `[ai] decision: relevant=true product=${product.id} score=${score} msgChars=${message.length} words≈${wordCount(message)}`
@@ -592,6 +735,7 @@ async function generateOutreachMessage(profile) {
       message,
       rag: {
         builtAt: rag.builtAt,
+        preferProducts,
         topChunks: rag.chunks.map((c) => ({ id: c.id, productId: c.productId, score: c.score })),
       },
     };
