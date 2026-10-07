@@ -121,8 +121,20 @@ async function fillMessage(page, text) {
   await editor.click();
   await sleep(300);
   await editor.fill('');
-  await page.keyboard.type(text, { delay: 15 });
+
+  // A bare Enter sends the message in LinkedIn's composer — use Shift+Enter for line breaks.
+  const lines = String(text || '').replace(/\r\n/g, '\n').split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i]) await page.keyboard.type(lines[i], { delay: 15 });
+    if (i < lines.length - 1) await page.keyboard.press('Shift+Enter');
+  }
   await sleep(500);
+
+  const typed = (await editor.innerText()).replace(/\s+/g, ' ').trim();
+  const expected = String(text || '').replace(/\s+/g, ' ').trim();
+  if (typed.length < expected.length * 0.9) {
+    throw new Error(`Composer has ${typed.length}/${expected.length} chars — not sending`);
+  }
 }
 
 async function clickSend(page, { forceSend } = {}) {

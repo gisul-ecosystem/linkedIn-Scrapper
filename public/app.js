@@ -382,7 +382,10 @@ async function loadActivity() {
   feed.innerHTML = '';
   activityItems.forEach((p) => {
     const status = p.messageSent ? 'sent' : p.queueStatus || 'queued';
-    const reason = p.aiReason || p.messageError || '';
+    const reason =
+      status === 'failed'
+        ? p.messageError || 'send failed'
+        : p.aiReason || p.messageError || '';
     const card = document.createElement('article');
     card.className = 'feed-card';
     card.innerHTML = `

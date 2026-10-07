@@ -55,27 +55,70 @@ async function rescueFromGoogleLimbo(page) {
   }
 }
 
-async function waitForManualLogin(page, timeoutMs = 600000) {
+/** Open, non-closed pages in the context (Google SSO opens a separate popup page). */
+function livePages(context, fallbackPage) {
+  const pages = context ? context.pages().filter((p) => !p.isClosed()) : [];
+  if (!pages.length && fallbackPage && !fallbackPage.isClosed()) pages.push(fallbackPage);
+  return pages;
+}
+
+async function findLoggedInPage(context, fallbackPage) {
+  for (const p of livePages(context, fallbackPage)) {
+    try {
+      if (await isLoggedIn(p)) return p;
+    } catch {
+      /* page navigating or closed */
+    }
+  }
+  return null;
+}
+
+/**
+ * Close Google SSO popups and return a LinkedIn tab, focused and on feed/login.
+ * Short timeouts so the UI button never hangs for minutes.
+ */
+async function forceBackToLinkedIn(context, fallbackPage) {
+  const pages = livePages(context, fallbackPage);
+  let main = pages.find((p) => /linkedin\.com/i.test(p.url())) || pages[0] || null;
+
+  for (const p of pages) {
+    if (p !== main && !/linkedin\.com/i.test(p.url())) {
+      await p.close().catch(() => {});
+    }
+  }
+
+  if (!main || main.isClosed()) {
+    if (!context) throw new Error('Browser context is gone — click Connect again');
+    main = await context.newPage();
+  }
+
+  await main.bringToFront().catch(() => {});
+  await gotoWithRetry(main, FEED_URL, { timeout: 25000 }, { retries: 2, delayMs: 1000 });
+  await sleep(1200);
+  if (await isLoggedIn(main)) return { page: main, loggedIn: true };
+
+  await gotoWithRetry(main, LOGIN_URL, { timeout: 25000 }, { retries: 2, delayMs: 1000 });
+  await main.bringToFront().catch(() => {});
+  return { page: main, loggedIn: false };
+}
+
+async function waitForManualLogin(page, timeoutMs = 600000, context = null) {
   console.log('[linkedin] Complete sign-in in the browser.');
   console.log('[linkedin] Prefer LinkedIn email + password (Google SSO often gets stuck on a blank page).');
   console.log('[linkedin] If stuck on Google: click Back to LinkedIn in the app, or open https://www.linkedin.com/feed/');
 
-  let lastRescueAt = 0;
+  const ctx = context || page.context();
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    if (await isLoggedIn(page)) {
-      console.log(`[linkedin] Authenticated → ${page.url()}`);
-      return true;
+    const authed = await findLoggedInPage(ctx, page);
+    if (authed) {
+      console.log(`[linkedin] Authenticated → ${authed.url()}`);
+      return authed;
     }
 
-    // Aggressive rescue from blank Google GSI page
-    if (Date.now() - lastRescueAt > 4000) {
-      const rescued = await rescueFromGoogleLimbo(page);
-      if (rescued) lastRescueAt = Date.now();
-      if (await isLoggedIn(page)) {
-        console.log(`[linkedin] Authenticated → ${page.url()}`);
-        return true;
-      }
+    // Only rescue the main tab automatically; popups are left alone so Google SSO can finish.
+    if (!page.isClosed() && isGoogleAuthLimbo(page.url())) {
+      await rescueFromGoogleLimbo(page);
     }
 
     await sleep(1200);
@@ -100,14 +143,14 @@ async function ensureLinkedInLoggedIn(page, context, sessionPath, { preferManual
 
   if (preferManual || !LINKEDIN_EMAIL || !LINKEDIN_PASSWORD) {
     await gotoWithRetry(page, LOGIN_URL);
-    await waitForManualLogin(page);
+    await waitForManualLogin(page, undefined, context);
   } else {
     await gotoWithRetry(page, LOGIN_URL);
     await page.locator('input#username, input[name="session_key"]').first().fill(LINKEDIN_EMAIL);
     await page.locator('input#password, input[name="session_password"]').first().fill(LINKEDIN_PASSWORD);
     await page.locator('button[type="submit"]').first().click();
     await sleep(3000);
-    if (page.url().includes('/checkpoint')) await waitForManualLogin(page);
+    if (page.url().includes('/checkpoint')) await waitForManualLogin(page, undefined, context);
     if (!(await isLoggedIn(page))) throw new Error('LinkedIn credential login failed');
   }
 
@@ -131,6 +174,7 @@ module.exports = {
   ensureLinkedInLoggedIn,
   isLoggedIn,
   waitForManualLogin,
+  forceBackToLinkedIn,
   saveLinkedInSession,
   hasLinkedInSession,
   clearLinkedInSession,

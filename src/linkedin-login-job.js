@@ -3,11 +3,9 @@ const {
   ensureLinkedInLoggedIn,
   hasLinkedInSession,
   clearLinkedInSession,
-  isLoggedIn,
+  forceBackToLinkedIn,
 } = require('./linkedin-auth');
 const { userPaths } = require('./paths');
-const { FEED_URL, LOGIN_URL } = require('./config');
-const { gotoWithRetry, sleep } = require('./utils');
 const { execSync } = require('child_process');
 
 function clearDesktopOverlays() {
@@ -63,26 +61,27 @@ async function rescueLinkedInBrowser(userId) {
     );
   }
 
-  const { page } = session;
   const job = linkedinJobs.get(userId);
   const log = (msg) => {
     if (job?.logs) job.logs.push(msg);
     console.log(`[linkedin-rescue:${userId}] ${msg}`);
   };
 
-  log(`Rescuing from ${page.url().slice(0, 100)}…`);
-  await gotoWithRetry(page, FEED_URL);
-  await sleep(1200);
+  const urls = session.context
+    .pages()
+    .filter((p) => !p.isClosed())
+    .map((p) => p.url().slice(0, 80));
+  log(`Rescuing — open tabs: ${urls.join(' | ') || '(none)'}`);
 
-  if (await isLoggedIn(page)) {
-    log('LinkedIn feed opened — you are signed in.');
-    return { ok: true, loggedIn: true, url: page.url() };
-  }
+  const { page, loggedIn } = await forceBackToLinkedIn(session.context, session.page);
+  session.page = page;
 
-  await gotoWithRetry(page, LOGIN_URL);
-  await sleep(800);
-  log('LinkedIn login page opened — use email + password (not Google).');
-  return { ok: true, loggedIn: false, url: page.url() };
+  log(
+    loggedIn
+      ? 'LinkedIn feed opened — you are signed in.'
+      : 'LinkedIn login page opened — use email + password (not Google).'
+  );
+  return { ok: true, loggedIn, url: page.url() };
 }
 
 async function startLinkedInConnect(userId) {
