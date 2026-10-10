@@ -9,7 +9,7 @@ const { CONNECTION_TYPES, buildSearchUrl, resolveConnectionType } = require('./s
 const { runScrapeJob, getJobStatus } = require('./scrape-job');
 const { runSendQueueJob, getSendJobStatus } = require('./send-queue-job');
 const { startLinkedInConnect, getLinkedInJob, hasLinkedInSession, logoutLinkedIn, rescueLinkedInBrowser } = require('./linkedin-login-job');
-const { listProducts } = require('./products');
+const { listProducts, parseProductIds } = require('./products');
 const { userPaths } = require('./paths');
 const { getRagStatus, buildIndex } = require('./rag/index');
 const { getSendBudget } = require('./send-limits');
@@ -403,13 +403,15 @@ app.post('/api/queue/skip', async (req, res) => {
   }
 });
 
-app.post('/api/queue/clear', async (_req, res) => {
+app.post('/api/queue/clear', async (req, res) => {
   try {
     if (getSendJobStatus(USER_ID).status === 'running') {
       return res.status(409).json({ error: 'Send job is running — wait until it finishes' });
     }
     await db.connectMongo();
-    const cleared = await db.profiles.clearQueue(USER_ID);
+    const slugs = Array.isArray(req.body?.slugs) ? req.body.slugs.filter(Boolean) : [];
+    const [product = ''] = parseProductIds(String(req.body?.product || ''));
+    const cleared = await db.profiles.clearQueue(USER_ID, { slugs, product });
     res.json({ ok: true, cleared, message: `Cleared ${cleared} queued draft(s)` });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -586,6 +588,7 @@ app.post('/api/scrape/import', upload.single('file'), async (req, res) => {
       startIndex: req.body?.startIndex,
       aiMessages: req.body?.aiMessages,
       rescrape: req.body?.rescrape,
+      products: req.body?.products,
       sendMessages: false,
     });
   } catch (err) {
@@ -637,6 +640,10 @@ function normalizeFilters(raw) {
     aiMessages: raw.aiMessages !== false && raw.aiMessages !== 'false',
     rescrape: raw.rescrape === true || raw.rescrape === 'true' || raw.rescrape === 'on',
     profileUrls: Array.isArray(raw.profileUrls) ? raw.profileUrls : [],
+    // Empty = all products allowed
+    products: parseProductIds(
+      Array.isArray(raw.products) ? raw.products.join(',') : String(raw.products || '')
+    ),
   };
   if (raw.profileUrl && !profileUrl) {
     throw new Error('Invalid LinkedIn profile URL. Use https://www.linkedin.com/in/username');

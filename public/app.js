@@ -23,17 +23,87 @@ function syncAutoSendUi() {
   const on = autoSendOn();
   const row = document.querySelector('.toggle-row');
   if (row) row.classList.toggle('on', on);
+  $('autoSendHint').textContent = on
+    ? 'On: matched profiles are messaged during the run (max 60/day, 10 min pause every 20).'
+    : 'Off: drafts go to the Queue for review.';
   $('flowHint').textContent = on
     ? 'Scrape → AI draft → send one-by-one'
     : 'Scrape → AI draft → queue for review';
   $('activityModeHint').textContent = on
     ? 'Auto-send is on — matches are messaged immediately during the scrape.'
     : 'Auto-send is off — drafts wait in Queue until you send.';
+  updateRunSummary();
+}
+
+// ---- Source mode (search | file | profile) ----
+let sourceMode = 'search';
+let lastStatus = null;
+
+function setSourceMode(mode) {
+  sourceMode = mode;
+  document.querySelectorAll('.seg').forEach((b) => {
+    const on = b.dataset.source === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-selected', String(on));
+  });
+  document.querySelectorAll('.source-pane').forEach((p) => {
+    p.hidden = p.dataset.pane !== mode;
+  });
+  $('volumeRow').hidden = mode === 'profile';
+  // File imports never auto-send
+  const auto = $('autoSend');
+  auto.disabled = mode === 'file';
+  if (mode === 'file' && auto.checked) auto.checked = false;
+  document.querySelector('.toggle-row')?.classList.toggle('disabled', mode === 'file');
+  syncAutoSendUi();
+  updatePreviewUrl();
+}
+
+function syncAiUi() {
+  $('productChips').classList.toggle('disabled', !$('aiMessages').checked);
+  updateRunSummary();
+}
+
+function productLabel(ids) {
+  const names = { racko: 'Racko', kanonkode: 'KanonKode', aaptor: 'Aaptor' };
+  return ids.map((id) => names[id] || id).join(', ');
+}
+
+/** Returns why Start can't run, or '' if it can. */
+function startBlockReason() {
+  if (!lastStatus?.linkedInConnected) return 'Connect LinkedIn in Session first.';
+  if (lastStatus?.scrapeJob?.status === 'running') return 'A run is in progress.';
+  if (sourceMode === 'file' && !$('connectionsFile').files?.[0]) return 'Choose a file to import.';
+  if (sourceMode === 'profile' && !$('profileUrl').value.trim()) return 'Paste a profile URL.';
+  if ($('aiMessages').checked && !selectedProducts().length) return 'Pick at least one product.';
+  if (autoSendOn() && !$('aiMessages').checked) return 'Auto-send needs AI drafting on.';
+  return '';
+}
+
+function updateRunSummary() {
+  const max = Number($('maxResults').value) || 60;
+  const ai = $('aiMessages').checked;
+  const products = selectedProducts();
+  const who =
+    sourceMode === 'profile'
+      ? 'Scrape 1 profile'
+      : sourceMode === 'file'
+        ? `Scrape up to ${max} from file`
+        : `Scrape up to ${max} connections`;
+  let what = ' · no AI drafts';
+  if (ai) {
+    const target = products.length === 3 ? 'any product' : productLabel(products) || '—';
+    what = autoSendOn() ? ` · auto-send for ${target}` : ` · queue drafts for ${target}`;
+  }
+  $('runSummary').textContent = who + what;
+  const reason = startBlockReason();
+  $('runBlock').textContent = reason;
+  $('startBtn').disabled = Boolean(reason);
 }
 
 function getFilters() {
   return {
-    profileUrl: $('profileUrl').value.trim(),
+    profileUrl: sourceMode === 'profile' ? $('profileUrl').value.trim() : '',
     connectionType: $('connectionType').value,
     keywords: '',
     title: '',
@@ -44,14 +114,18 @@ function getFilters() {
     rescrape: $('rescrape').checked,
     aiMessages: $('aiMessages').checked,
     sendMessages: autoSendOn(),
+    products: selectedProducts(),
   };
+}
+
+function selectedProducts() {
+  return [...document.querySelectorAll('.product-check:checked')].map((el) => el.value);
 }
 
 async function initApp() {
   syncAutoSendUi();
   const status = await api('/api/status');
   updateLinkedInUI(status);
-  $('startBtn').disabled = !status.linkedInConnected || status.scrapeJob?.status === 'running';
   if (status.linkedInConnected) {
     $('linkedInPanel').classList.add('connected');
   }
@@ -67,6 +141,8 @@ async function initApp() {
 }
 
 function updateLinkedInUI(status) {
+  lastStatus = status;
+  updateRunSummary();
   const badge = $('linkedInStatus');
   const logoutBtn = $('logoutLinkedInBtn');
   const backBtn = $('backToLinkedInBtn');
@@ -74,7 +150,6 @@ function updateLinkedInUI(status) {
     badge.textContent = 'LinkedIn connected';
     badge.className = 'pill ok';
     $('connectLinkedInBtn').textContent = 'Reconnect';
-    $('startBtn').disabled = status.scrapeJob?.status === 'running';
     if (logoutBtn) logoutBtn.hidden = false;
     if (backBtn) backBtn.hidden = true;
     $('linkedInPanel').classList.add('connected');
@@ -82,7 +157,6 @@ function updateLinkedInUI(status) {
     badge.textContent = 'LinkedIn offline';
     badge.className = 'pill warn';
     $('connectLinkedInBtn').textContent = 'Connect';
-    $('startBtn').disabled = true;
     if (logoutBtn) logoutBtn.hidden = true;
     if (backBtn) backBtn.hidden = status.linkedInJob?.status !== 'running';
     $('linkedInPanel').classList.remove('connected');
@@ -192,13 +266,16 @@ function updateTypeDescription() {
 
 async function updatePreviewUrl() {
   try {
+    updateRunSummary();
     const filters = getFilters();
     const file = $('connectionsFile')?.files?.[0];
-    if (file) {
-      $('previewUrl').textContent = `File import · ${file.name} · scrape URLs · queue only (no send)`;
+    if (sourceMode === 'file') {
+      $('previewUrl').textContent = file
+        ? `File import · ${file.name} · queue only (no send)`
+        : 'File import · no file chosen';
       return;
     }
-    if (filters.profileUrl) {
+    if (sourceMode === 'profile') {
       $('previewUrl').textContent = `Single profile · ${filters.profileUrl}`;
       return;
     }
@@ -210,25 +287,80 @@ async function updatePreviewUrl() {
   }
 }
 
+/** Classify a scrape log line → { kind, tag, text } for colored rendering. */
+function classifyLog(msg) {
+  const m = String(msg || '');
+  const strip = (re) => m.replace(re, '').trim();
+  if (/^\[\d+\/\d+\]/.test(m)) return { kind: 'header', text: m };
+  if (/AI QUEUE →/.test(m)) return { kind: 'item', tag: ['queue', 'QUEUED'], text: strip(/^\[\d+\]\s*AI QUEUE →\s*/) };
+  if (/AI MATCH →/.test(m)) return { kind: 'item', tag: ['queue', 'MATCH'], text: strip(/^\[\d+\]\s*AI MATCH →\s*/) };
+  if (/AI SKIP/.test(m)) return { kind: 'item', tag: ['skip', 'SKIP'], text: strip(/^\[\d+\]\s*AI SKIP\s*/) };
+  if (/\bSENT →/.test(m)) return { kind: 'item', tag: ['sent', 'SENT'], text: strip(/^\[\d+\]\s*SENT →\s*/) };
+  if (/^Done —/.test(m)) return { kind: 'item', tag: ['done', 'DONE'], text: strip(/^Done —\s*/) };
+  if (/SEND FAILED|SEND ERROR|AI error|save error/i.test(m)) return { kind: 'item', tag: ['fail', 'ERROR'], text: strip(/^\[\d+\]\s*/) };
+  if (/scraped →|fields →|RAG \+ AI matching/.test(m)) return { kind: 'detail', text: strip(/^\[\d+\]\s*/) };
+  return { kind: 'item', text: m };
+}
+
+function fmtTime(at) {
+  if (!at) return '';
+  const d = new Date(at);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleTimeString([], { hour12: false });
+}
+
+let lastLogKey = '';
+
 function renderJob(job) {
   const status = job?.status || 'idle';
-  $('jobStatus').textContent = status;
-  $('jobCurrent').textContent = job?.current || '—';
+  const badge = $('jobStatus');
+  badge.textContent = status;
+  badge.className = `status-badge ${status}`;
+  $('jobCurrent').textContent = status === 'running' ? job?.current || '—' : job?.current ? `Last: ${job.current}` : '—';
   const total = job?.total || 0;
   const done = job?.processed || 0;
-  $('jobCounts').textContent = `${done} / ${total}`;
+  const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+  $('jobPct').textContent = `${pct}%`;
+  $('jobCounts').textContent = `${done} / ${total} profiles`;
+  $('progressBar').style.width = `${pct}%`;
+  $('jobQueued').textContent = String(job?.queued || 0);
+  $('jobSkipped').textContent = String(job?.skipped || 0);
   $('jobSent').textContent = String(job?.sent || 0);
-  $('progressBar').style.width = total > 0 ? `${Math.round((done / total) * 100)}%` : '0%';
+  $('jobErrors').textContent = String((job?.errors?.length || 0) + (job?.sendFailed || 0));
+
+  const verbose = $('verboseLogs').checked;
+  const entries = (job?.logs || []).slice(-80);
+  const key = `${verbose}|${entries.length}|${entries[entries.length - 1]?.at || ''}`;
+  if (key === lastLogKey) return; // nothing new — keep scroll position
+  lastLogKey = key;
+
   const logs = $('jobLogs');
+  const nearBottom = logs.scrollHeight - logs.scrollTop - logs.clientHeight < 40;
   logs.innerHTML = '';
-  (job?.logs || [])
-    .slice(-16)
-    .reverse()
-    .forEach((entry) => {
-      const li = document.createElement('li');
-      li.textContent = typeof entry === 'string' ? entry : entry.msg;
-      logs.appendChild(li);
-    });
+  if (!entries.length) {
+    logs.innerHTML = '<li class="detail"><span></span><span>No run yet — configure and press Start.</span></li>';
+    return;
+  }
+  for (const entry of entries) {
+    const msg = typeof entry === 'string' ? entry : entry.msg;
+    const { kind, tag, text } = classifyLog(msg);
+    if (kind === 'detail' && !verbose) continue;
+    const li = document.createElement('li');
+    li.className = kind;
+    const time = document.createElement('span');
+    time.className = 'log-time';
+    time.textContent = fmtTime(entry?.at);
+    const body = document.createElement('span');
+    if (tag) {
+      const t = document.createElement('span');
+      t.className = `log-tag ${tag[0]}`;
+      t.textContent = tag[1];
+      body.appendChild(t);
+    }
+    body.appendChild(document.createTextNode(text));
+    li.append(time, body);
+    logs.appendChild(li);
+  }
+  if (nearBottom || status === 'running') logs.scrollTop = logs.scrollHeight;
 }
 
 function renderSendJob(job) {
@@ -318,6 +450,7 @@ async function startFileImport(file) {
     fd.append('startIndex', String(startIndex));
     fd.append('aiMessages', String($('aiMessages').checked));
     fd.append('rescrape', String($('rescrape').checked));
+    fd.append('products', selectedProducts().join(','));
     const res = await fetch('/api/scrape/import', { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.statusText);
@@ -325,24 +458,25 @@ async function startFileImport(file) {
       $('fileHint').textContent = `${file.name} · ${data.found} URL(s) found · scraping up to ${data.willProcess}`;
     }
     showView('run');
+    await refreshStatus();
   } catch (err) {
     alert(err.message);
-    $('startBtn').disabled = false;
+    updateRunSummary();
   }
 }
 
 async function startScrape() {
-  const file = $('connectionsFile')?.files?.[0];
-  if (file) {
-    await startFileImport(file);
+  const reason = startBlockReason();
+  if (reason) {
+    alert(reason);
+    return;
+  }
+  if (sourceMode === 'file') {
+    await startFileImport($('connectionsFile').files[0]);
     return;
   }
 
   const filters = getFilters();
-  if (filters.sendMessages && !filters.aiMessages) {
-    alert('Turn on AI match + draft to auto-send messages.');
-    return;
-  }
   if (
     filters.sendMessages &&
     !confirm('Auto-send is ON. Matched profiles will be messaged one-by-one during this scrape. Continue?')
@@ -354,9 +488,10 @@ async function startScrape() {
   try {
     await api('/api/scrape/start', { method: 'POST', body: JSON.stringify(filters) });
     showView('run');
+    await refreshStatus();
   } catch (err) {
     alert(err.message);
-    $('startBtn').disabled = false;
+    updateRunSummary();
   }
 }
 
@@ -514,15 +649,32 @@ async function skipSelected() {
 }
 
 async function clearQueue() {
+  const select = $('clearProduct');
+  const product = select?.value || '';
+  const label = product ? `${select.selectedOptions[0].textContent} drafts` : 'all queued drafts';
   if (
     !confirm(
-      'Clear all queued drafts? Sent messages stay in history. Scraped profiles stay in Mongo — only unsent queue drafts are removed.'
+      `Clear ${label}? Sent messages stay in history. Scraped profiles stay in Mongo — only unsent queue drafts are removed.`
     )
   ) {
     return;
   }
+  await postClear({ product });
+}
+
+async function clearSelected() {
+  const slugs = selectedQueueSlugs();
+  if (!slugs.length) {
+    alert('Select drafts to clear.');
+    return;
+  }
+  if (!confirm(`Clear ${slugs.length} selected draft(s)?`)) return;
+  await postClear({ slugs });
+}
+
+async function postClear(body) {
   try {
-    const result = await api('/api/queue/clear', { method: 'POST' });
+    const result = await api('/api/queue/clear', { method: 'POST', body: JSON.stringify(body) });
     await loadQueue();
     await refreshStatus();
     alert(result.message || `Cleared ${result.cleared || 0} draft(s)`);
@@ -616,7 +768,6 @@ function startPolling() {
         loadQueue();
         loadJobs();
         loadActivity();
-        $('startBtn').disabled = !status.linkedInConnected;
       }
       if (status.sendJob?.status === 'completed' || status.sendJob?.status === 'failed') {
         loadQueue();
@@ -646,6 +797,26 @@ window.addEventListener('hashchange', () => {
 });
 
 $('autoSend')?.addEventListener('change', syncAutoSendUi);
+$('aiMessages').addEventListener('change', syncAiUi);
+document.querySelectorAll('.product-check').forEach((el) => el.addEventListener('change', updateRunSummary));
+document.querySelectorAll('.seg').forEach((b) => b.addEventListener('click', () => setSourceMode(b.dataset.source)));
+$('verboseLogs').addEventListener('change', () => renderJob(lastStatus?.scrapeJob));
+
+// Drag & drop onto the file zone
+const dropzone = $('dropzone');
+['dragenter', 'dragover'].forEach((ev) =>
+  dropzone.addEventListener(ev, (e) => {
+    e.preventDefault();
+    dropzone.classList.add('drag');
+  })
+);
+['dragleave', 'drop'].forEach((ev) => dropzone.addEventListener(ev, () => dropzone.classList.remove('drag')));
+dropzone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  if (!e.dataTransfer?.files?.length) return;
+  $('connectionsFile').files = e.dataTransfer.files;
+  $('connectionsFile').dispatchEvent(new Event('change'));
+});
 
 ['connectionType', 'maxResults', 'startIndex', 'profileUrl'].forEach((id) => {
   $(id).addEventListener('input', updatePreviewUrl);
@@ -656,12 +827,15 @@ $('connectionsFile')?.addEventListener('change', async () => {
   const file = $('connectionsFile')?.files?.[0];
   const hint = $('fileHint');
   if (!hint) return;
+  const zone = $('dropzone');
+  zone.classList.toggle('has-file', Boolean(file));
+  $('dropzoneTitle').textContent = file ? file.name : 'Drop a CSV or Excel file, or click to browse';
   if (!file) {
-    hint.textContent = '';
+    hint.textContent = 'LinkedIn Connections export, or any sheet with linkedin.com/in/ links.';
     updatePreviewUrl();
     return;
   }
-  hint.textContent = `Selected ${file.name}`;
+  hint.textContent = 'Reading…';
   const max = Number($('maxResults').value) || 60;
   if (/\.csv$/i.test(file.name) || /csv|plain/.test(file.type || '')) {
     try {
@@ -671,12 +845,12 @@ $('connectionsFile')?.addEventListener('change', async () => {
       for (const m of text.match(re) || []) {
         seen.add(m.toLowerCase().replace(/\/$/, ''));
       }
-      hint.textContent = `${file.name} · ${seen.size} LinkedIn URL(s) found · this run will scrape up to ${max}`;
+      hint.textContent = `${seen.size} LinkedIn URL(s) found · this run scrapes up to ${max} · click to change`;
     } catch {
-      hint.textContent = `${file.name} selected`;
+      hint.textContent = 'Selected · click to change';
     }
   } else {
-    hint.textContent = `${file.name} · Excel — URLs are counted when you click Start. Max profiles still applies.`;
+    hint.textContent = 'Excel — URLs are counted when you start · click to change';
   }
   updatePreviewUrl();
 });
@@ -693,6 +867,7 @@ $('sendSelectedBtn').addEventListener('click', () => sendSlugs(selectedQueueSlug
 $('sendAllBtn').addEventListener('click', sendAllQueued);
 $('skipSelectedBtn').addEventListener('click', skipSelected);
 $('clearQueueBtn')?.addEventListener('click', clearQueue);
+$('clearSelectedBtn')?.addEventListener('click', clearSelected);
 $('selectAllQueue').addEventListener('change', (e) => {
   document.querySelectorAll('.queue-check').forEach((el) => {
     el.checked = e.target.checked;

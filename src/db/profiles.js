@@ -158,7 +158,11 @@ async function markQueueSkipped(ownerId, slug) {
   return getProfile(ownerId, slug);
 }
 
-async function clearQueue(ownerId) {
+/**
+ * Clear unsent drafts. Optional scope: specific slugs, or drafts whose
+ * recommendedProduct includes `product` (e.g. "aaptor" matches "kanonkode+aaptor").
+ */
+async function clearQueue(ownerId, { slugs = [], product = '' } = {}) {
   const filter = {
     ownerId,
     messageSent: { $ne: true },
@@ -172,6 +176,8 @@ async function clearQueue(ownerId) {
       },
     ],
   };
+  if (slugs.length) filter.slug = { $in: slugs };
+  if (product) filter.recommendedProduct = { $regex: `(^|\\+)${product}(\\+|$)` };
   const result = await getDb().collection('profiles').updateMany(filter, {
     $set: {
       queueStatus: 'cleared',

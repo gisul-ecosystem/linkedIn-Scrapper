@@ -375,10 +375,21 @@ If proceed=false / NO FIT: relevant=false, message="", productId=null.
 "I hope you are doing great/well", "I'm reaching out because/from", "I came across/noticed your profile", "Would love to/I wanted to", "We are a leading provider of", "Exciting opportunity/synergies/potential alignment", "Your work stands out/caught my attention", "Customised upskilling programs", "Reaching out to explore", "I noticed", duplicated company names, university/education fragments in the opener, "{Name}, {Title} at {Company}."`;
 }
 
-function userPrompt(profile, rag) {
+function allowedProductsBlock(allowed) {
+  if (!allowed?.length) return '';
+  const names = allowed.map((id) => `${getProduct(id)?.name || id} (${id})`).join(', ');
+  return `## Products selected for this run
+Only these may be pitched: ${names}. Never mention or pitch any other Gisul platform.
+Apply the pitch matrix restricted to these products (e.g. a CEO normally gets all three — pitch only the selected ones).
+If the person is not a genuine fit for a selected product, set proceed=false.
+
+`;
+}
+
+function userPrompt(profile, rag, allowed = null) {
   const p = cleanProfileForAi(profile);
   const geo = detectGeography(p);
-  return `## Product knowledge (RAG — facts/URLs only)
+  return `${allowedProductsBlock(allowed)}## Product knowledge (RAG — facts/URLs only)
 ${rag.contextBlock || '(none)'}
 
 ## Cleaned LinkedIn profile
@@ -612,13 +623,23 @@ function formatDecision(parsed, product, score) {
   console.log(`[ai] brands=${brands} confidence=${confidence} proceed=${parsed.proceed !== false}`);
 }
 
-async function generateOutreachMessage(profile) {
+/**
+ * @param {object} profile
+ * @param {{ allowedProducts?: string[] }} [opts]
+ * allowedProducts — product ids selected for this run; empty = all products.
+ */
+async function generateOutreachMessage(profile, { allowedProducts = [] } = {}) {
   const cleaned = cleanProfileForAi(profile);
-  const heuristicFirst = heuristicProductId(cleaned);
-  const preferProducts = parseProductIds(heuristicFirst);
+  const allowed = parseProductIds([].concat(allowedProducts || []).join(','));
+  const restricted = allowed.length > 0 && allowed.length < listProducts().length;
+  const restrictIds = (ids) => (restricted ? ids.filter((id) => allowed.includes(id)) : ids);
+
+  const heuristicIds = restrictIds(parseProductIds(heuristicProductId(cleaned)));
+  const heuristicFirst = heuristicIds.join('+') || null;
+  const preferProducts = heuristicIds.length ? heuristicIds : restricted ? allowed : [];
   const rag = retrieveForProfile(cleaned, { preferProducts });
   const system = systemPrompt();
-  const user = userPrompt(cleaned, rag);
+  const user = userPrompt(cleaned, rag, restricted ? allowed : null);
   logAiInput(cleaned);
 
   const hasClaude = Boolean(ANTHROPIC_API_KEY);
@@ -646,6 +667,21 @@ async function generateOutreachMessage(profile) {
     let score = Number(parsed.relevanceScore || 0);
     let product = resolveProductFromParsed(parsed);
 
+    // Enforce the run's product selection even if the model ignored it
+    let outOfScope = null;
+    let narrowed = false;
+    if (product && restricted) {
+      const ids = product.productIds || parseProductIds(product.id);
+      const kept = restrictIds(ids);
+      if (!kept.length) {
+        outOfScope = product.name;
+        product = null;
+      } else if (kept.length < ids.length) {
+        product = getProduct(kept.join('+'));
+        narrowed = true;
+      }
+    }
+
     if ((!proceed || !product) && heuristicFirst && looksLikeEmptyProfileComplaint(parsed.reason || parsed.fitReason)) {
       console.warn(`[ai] empty-profile false negative — heuristic=${heuristicFirst}`);
       const fallback = buildFallbackMessage(cleaned, heuristicFirst, {
@@ -662,9 +698,10 @@ async function generateOutreachMessage(profile) {
 
     if (!proceed || score < AI_CONFIDENCE_MIN_SCORE || !product) {
       formatDecision({ ...parsed, proceed: false }, null, score);
-      console.log(
-        `[ai] decision: relevant=false score=${score} reason=${String(parsed.reason || parsed.fitReason || '').slice(0, 140)}`
-      );
+      const skipReason = outOfScope
+        ? `Fits ${outOfScope} — not a selected product. ${parsed.reason || parsed.fitReason || ''}`
+        : String(parsed.reason || parsed.fitReason || 'Below relevance threshold or no product fit');
+      console.log(`[ai] decision: relevant=false score=${score} reason=${skipReason.slice(0, 140)}`);
       return {
         relevant: false,
         productId: null,
@@ -674,10 +711,7 @@ async function generateOutreachMessage(profile) {
         brands: parsed.brands || 'NO FIT',
         confidence: parsed.confidence || 'Low',
         relevanceScore: score,
-        reason: String(parsed.reason || parsed.fitReason || 'Below relevance threshold or no product fit').slice(
-          0,
-          400
-        ),
+        reason: skipReason.trim().slice(0, 400),
         matchSignals: Array.isArray(parsed.matchSignals) ? parsed.matchSignals.slice(0, 8) : [],
         message: '',
         rag: {
@@ -693,7 +727,11 @@ async function generateOutreachMessage(profile) {
     });
     let wc = wordCount(message);
 
-    if (wc > 140) {
+    if (narrowed) {
+      // Model's draft pitches unselected products — use the template for the kept ones
+      console.warn(`[ai] model pitched unselected products — template for ${product.id}`);
+      message = buildFallbackMessage(cleaned, product.id).message;
+    } else if (wc > 140) {
       console.warn(`[ai] message ${wc} words > 140 — heuristic fallback`);
       message = buildFallbackMessage(cleaned, product.id).message;
     } else if (wc > 120) {
@@ -741,7 +779,7 @@ async function generateOutreachMessage(profile) {
     };
   } catch (err) {
     console.warn(`[ai] error: ${err.message}`);
-    const heuristic = heuristicProductId(cleaned);
+    const heuristic = heuristicFirst;
     if (!heuristic) {
       return buildFallbackMessage(cleaned, null, {
         relevant: false,

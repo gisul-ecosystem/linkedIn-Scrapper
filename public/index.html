@@ -46,107 +46,207 @@
         <div>
           <p class="eyebrow">Operations</p>
           <h1>Run outreach</h1>
-          <p class="lede">Import a connections file or search LinkedIn. AI drafts stay in the queue until you send.</p>
+          <p class="lede">Pick who to scrape, choose the products to pitch, then start. Drafts wait in the queue unless auto-send is on.</p>
         </div>
       </div>
+
       <div class="workspace">
-        <section class="panel">
-          <div class="panel-head">
-            <div>
-              <h2>Target</h2>
-              <p class="lede">File import, one profile, or a connections search.</p>
+        <section class="panel setup-panel">
+          <!-- 1 · Source -->
+          <div class="step">
+            <div class="step-head">
+              <span class="step-num">1</span>
+              <div>
+                <h2>Source</h2>
+                <p class="step-sub">Where the profiles come from.</p>
+              </div>
+            </div>
+
+            <div class="segmented" role="tablist" aria-label="Source">
+              <button type="button" class="seg active" data-source="search" role="tab" aria-selected="true">
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="9" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M13.2 13.2 17 17" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                LinkedIn search
+              </button>
+              <button type="button" class="seg" data-source="file" role="tab" aria-selected="false">
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><path d="M5 2.5h6.5L16 7v10.5H5z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/><path d="M11 2.5V7h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+                Upload file
+              </button>
+              <button type="button" class="seg" data-source="profile" role="tab" aria-selected="false">
+                <svg viewBox="0 0 20 20" width="16" height="16" aria-hidden="true"><circle cx="10" cy="7" r="3.4" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M3.5 17c.9-3.2 3.4-4.8 6.5-4.8s5.6 1.6 6.5 4.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+                One profile
+              </button>
+            </div>
+
+            <div class="source-pane" data-pane="search">
+              <label class="field">
+                <span>Connection type</span>
+                <select id="connectionType"></select>
+                <small id="typeDescription" class="hint"></small>
+              </label>
+            </div>
+
+            <div class="source-pane" data-pane="file" hidden>
+              <label class="dropzone" id="dropzone" for="connectionsFile">
+                <input id="connectionsFile" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true"><path d="M12 15V4m0 0-4 4m4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                <strong id="dropzoneTitle">Drop a CSV or Excel file, or click to browse</strong>
+                <small class="hint" id="fileHint">LinkedIn Connections export, or any sheet with linkedin.com/in/ links.</small>
+              </label>
+              <p class="note">File imports never auto-send. Drafts wait in the queue.</p>
+            </div>
+
+            <div class="source-pane" data-pane="profile" hidden>
+              <label class="field">
+                <span>Profile URL</span>
+                <input id="profileUrl" type="url" placeholder="https://www.linkedin.com/in/username" autocomplete="off" />
+              </label>
+            </div>
+
+            <div class="row" id="volumeRow">
+              <label class="field">
+                <span>Max profiles</span>
+                <input id="maxResults" type="number" min="1" max="2000" value="60" />
+              </label>
+              <label class="field">
+                <span>Start at #</span>
+                <input id="startIndex" type="number" min="0" value="0" />
+              </label>
             </div>
           </div>
 
-          <label class="toggle-row" for="autoSend">
-            <div>
-              <strong>Auto-send messages</strong>
-              <span class="hint">Max 60/day · pause 10 min after every 20. File imports never auto-send.</span>
+          <!-- 2 · Targeting -->
+          <div class="step">
+            <div class="step-head">
+              <span class="step-num">2</span>
+              <div>
+                <h2>Targeting</h2>
+                <p class="step-sub">AI keeps only people who fit the products you pick.</p>
+              </div>
+              <label class="mini-switch" title="AI match + draft">
+                <input id="aiMessages" type="checkbox" checked />
+                <span class="switch sm" aria-hidden="true"></span>
+                <span class="mini-switch-label">AI</span>
+              </label>
             </div>
-            <input id="autoSend" type="checkbox" />
-            <span class="switch" aria-hidden="true"></span>
-          </label>
 
-          <label class="field">
-            <span>Connections file <em>(CSV or Excel)</em></span>
-            <input id="connectionsFile" type="file" accept=".csv,.xlsx,.xls,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
-            <small class="hint">LinkedIn Connections export or any sheet with profile URLs. Drafts queue until Send to all.</small>
-            <small class="hint" id="fileHint"></small>
-          </label>
-
-          <label class="field">
-            <span>Direct profile URL <em>(optional — ignored if a file is selected)</em></span>
-            <input id="profileUrl" type="url" placeholder="https://www.linkedin.com/in/username" autocomplete="off" />
-          </label>
-
-          <label class="field">
-            <span>Connection type</span>
-            <select id="connectionType"></select>
-            <small id="typeDescription" class="hint"></small>
-          </label>
-
-          <div class="row">
-            <label class="field">
-              <span>Max profiles</span>
-              <input id="maxResults" type="number" min="1" max="2000" value="60" />
-              <small class="hint">How many URLs to scrape this run.</small>
-            </label>
-            <label class="field">
-              <span>Start index</span>
-              <input id="startIndex" type="number" min="0" value="0" />
-            </label>
+            <div class="chips" id="productChips">
+              <label class="chip">
+                <input class="product-check" type="checkbox" value="racko" checked />
+                <span class="chip-body">
+                  <strong>Racko</strong>
+                  <small>Private cloud · CTO, IT, DevOps</small>
+                </span>
+              </label>
+              <label class="chip">
+                <input class="product-check" type="checkbox" value="kanonkode" checked />
+                <span class="chip-body">
+                  <strong>KanonKode</strong>
+                  <small>Upskilling · L&amp;D, CHRO</small>
+                </span>
+              </label>
+              <label class="chip">
+                <input class="product-check" type="checkbox" value="aaptor" checked />
+                <span class="chip-body">
+                  <strong>Aaptor</strong>
+                  <small>AI assessments · TA, hiring</small>
+                </span>
+              </label>
+            </div>
+            <p class="hint" id="aiHint"></p>
           </div>
 
-          <div class="option-stack">
-            <label class="check-row">
-              <input id="aiMessages" type="checkbox" checked />
-              <span>AI match + draft (Racko / KanonKode / Aaptor)</span>
+          <!-- 3 · Delivery -->
+          <div class="step">
+            <div class="step-head">
+              <span class="step-num">3</span>
+              <div>
+                <h2>Delivery</h2>
+                <p class="step-sub">What happens to each draft.</p>
+              </div>
+            </div>
+
+            <label class="toggle-row" for="autoSend">
+              <div>
+                <strong>Auto-send messages</strong>
+                <span class="hint" id="autoSendHint">Off: drafts go to the Queue for review.</span>
+              </div>
+              <input id="autoSend" type="checkbox" />
+              <span class="switch" aria-hidden="true"></span>
             </label>
-            <label class="check-row">
-              <input id="rescrape" type="checkbox" />
-              <span>Re-scrape profiles already in Mongo</span>
-            </label>
+
+            <details class="advanced">
+              <summary>Advanced</summary>
+              <label class="check-row">
+                <input id="rescrape" type="checkbox" />
+                <span>Re-scrape profiles already saved in Mongo <small class="hint">(needed when switching products)</small></span>
+              </label>
+              <p class="hint preview" id="previewUrl"></p>
+            </details>
           </div>
 
-          <p class="hint" id="aiHint"></p>
-          <p class="hint preview" id="previewUrl"></p>
-
-          <div class="actions">
-            <button id="startBtn" class="btn primary lg" disabled>Start</button>
-            <button id="refreshBtn" class="btn ghost" type="button">Refresh</button>
-            <button id="downloadBtn" class="btn ghost" type="button">Download Excel</button>
+          <div class="run-bar">
+            <div class="run-summary">
+              <strong id="runSummary">Scrape up to 60 profiles</strong>
+              <span class="hint" id="runBlock"></span>
+            </div>
+            <button id="startBtn" class="btn primary lg" disabled>
+              <svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true"><path d="M6 4.5v11l9-5.5z" fill="currentColor"/></svg>
+              Start run
+            </button>
           </div>
         </section>
 
         <section class="panel activity-panel">
           <div class="panel-head">
-            <div>
-              <h2>Live flight</h2>
-              <p class="lede">Scrape and send progress.</p>
+            <div class="live-title">
+              <h2>Live run</h2>
+              <span class="status-badge idle" id="jobStatus">idle</span>
+            </div>
+            <div class="actions tight">
+              <button id="refreshBtn" class="btn ghost sm" type="button" title="Refresh">
+                <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path d="M16 10a6 6 0 1 1-1.8-4.3M16 3.5v3.2h-3.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </button>
+              <button id="downloadBtn" class="btn ghost sm" type="button">
+                <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true"><path d="M10 3v9m0 0-3.5-3.5M10 12l3.5-3.5M4 15.5h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Excel
+              </button>
             </div>
           </div>
+
+          <div class="progress-head">
+            <span class="progress-pct" id="jobPct">0%</span>
+            <span class="muted" id="jobCounts">0 / 0 profiles</span>
+          </div>
+          <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
+          <p class="status-line"><span class="muted">Now:</span> <span id="jobCurrent">—</span></p>
 
           <div class="stat-grid">
             <div class="stat">
-              <span class="stat-label">Scrape</span>
-              <strong id="jobStatus">idle</strong>
+              <span class="stat-label">Queued</span>
+              <strong id="jobQueued">0</strong>
             </div>
-            <div class="stat">
-              <span class="stat-label">Progress</span>
-              <strong id="jobCounts">0 / 0</strong>
+            <div class="stat skip">
+              <span class="stat-label">Skipped</span>
+              <strong id="jobSkipped">0</strong>
             </div>
-            <div class="stat">
-              <span class="stat-label">Sent this run</span>
+            <div class="stat ok">
+              <span class="stat-label">Sent</span>
               <strong id="jobSent">0</strong>
             </div>
-            <div class="stat">
-              <span class="stat-label">Queue send</span>
-              <strong id="sendJobStatus">idle</strong>
+            <div class="stat bad">
+              <span class="stat-label">Errors</span>
+              <strong id="jobErrors">0</strong>
             </div>
           </div>
+          <p class="hint send-line">Queue send: <span id="sendJobStatus">idle</span></p>
 
-          <div class="progress-wrap"><div class="progress-bar" id="progressBar"></div></div>
-          <p class="status-line"><span class="muted">Current:</span> <span id="jobCurrent">—</span></p>
+          <div class="log-head">
+            <span>Log</span>
+            <label class="check-row compact">
+              <input id="verboseLogs" type="checkbox" />
+              <span>Show details</span>
+            </label>
+          </div>
           <ul id="jobLogs" class="logs"></ul>
         </section>
       </div>
@@ -164,7 +264,14 @@
           <button id="sendAllBtn" class="btn primary" type="button">Send to all</button>
           <button id="sendSelectedBtn" class="btn ghost" type="button">Send selected</button>
           <button id="skipSelectedBtn" class="btn ghost" type="button">Skip selected</button>
-          <button id="clearQueueBtn" class="btn ghost-danger" type="button">Clear queue</button>
+          <button id="clearSelectedBtn" class="btn ghost-danger" type="button">Clear selected</button>
+          <select id="clearProduct" class="clear-product" title="Which drafts to clear">
+            <option value="">All products</option>
+            <option value="racko">Racko</option>
+            <option value="kanonkode">KanonKode</option>
+            <option value="aaptor">Aaptor</option>
+          </select>
+          <button id="clearQueueBtn" class="btn ghost-danger" type="button">Clear drafts</button>
         </div>
       </div>
       <section class="panel">

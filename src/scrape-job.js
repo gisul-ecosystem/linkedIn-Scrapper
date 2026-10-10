@@ -57,6 +57,7 @@ async function runScrapeJob(userId, filters, onProgress) {
     sent: 0,
     sendFailed: 0,
     skipped: 0,
+    queued: 0,
   };
   activeJobs.set(userId, job);
   await db.jobs.createScrapeJob(job);
@@ -134,7 +135,12 @@ async function runScrapeJob(userId, filters, onProgress) {
     } else {
       await log(`Mode: ${filters.connectionType} | ${buildSearchUrl(filters)}`);
     }
-    if (useAi) await log('AI product matching: Racko + KanonKode + Aaptor (RAG)');
+    const allowedProducts = Array.isArray(filters.products) ? filters.products : [];
+    if (useAi) {
+      await log(
+        `AI product matching: ${allowedProducts.length ? allowedProducts.join(' + ') : 'racko + kanonkode + aaptor'} (RAG)`
+      );
+    }
     if (usingImport) {
       await log('File import — drafts go to queue only. Nothing is sent until Send to all.');
     } else if (autoSend) {
@@ -273,7 +279,7 @@ async function runScrapeJob(userId, filters, onProgress) {
             `[${i + 1}] fields → about=${(record.about || '').length}ch exp=${(record.experience || '').length}ch title="${record.jobTitle || ''}"`
           );
           await log(`[${i + 1}] RAG + AI matching…`);
-          const outreach = await generateOutreachMessage(record);
+          const outreach = await generateOutreachMessage(record, { allowedProducts });
           record.relevant = outreach.relevant;
           record.relevanceScore = outreach.relevanceScore;
           record.matchSignals = outreach.matchSignals || [];
@@ -347,6 +353,7 @@ async function runScrapeJob(userId, filters, onProgress) {
             }
           } else {
             record.queueStatus = 'queued';
+            job.queued = (job.queued || 0) + 1;
             await log(
               `[${i + 1}] AI QUEUE → ${outreach.productName} score=${outreach.relevanceScore} — ${String(outreach.reason).slice(0, 120)}`
             );
