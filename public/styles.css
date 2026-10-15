@@ -859,8 +859,12 @@ a:hover { text-decoration: underline; }
 
 .briefs { display: grid; gap: 8px; margin-bottom: 8px; }
 .briefs.disabled { opacity: 0.45; pointer-events: none; }
-.brief { display: grid; gap: 4px; }
+.brief { display: grid; gap: 6px; }
+.brief > label { display: grid; gap: 4px; }
 .brief[hidden] { display: none; }
-.brief > span { font-size: 0.8rem; color: var(--muted); }
-.brief > span strong { color: var(--ink); }
+.brief > label > span { font-size: 0.8rem; color: var(--muted); }
+.brief > label > span strong { color: var(--ink); }
 .brief textarea { resize: vertical; min-height: 44px; font-size: 0.85rem; }
+@media (min-width: 720px) {
+  .brief { grid-template-columns: 1fr 1fr; }
+}

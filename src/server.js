@@ -590,6 +590,7 @@ app.post('/api/scrape/import', upload.single('file'), async (req, res) => {
       rescrape: req.body?.rescrape,
       products: req.body?.products,
       productContext: req.body?.productContext,
+      productFraming: req.body?.productFraming,
       sendMessages: false,
     });
   } catch (err) {
@@ -625,7 +626,7 @@ app.get('/api/job', (_req, res) => {
   res.json(getJobStatus(USER_ID));
 });
 
-/** { racko: "who to target…" } — accepts an object or JSON string (multipart import). */
+/** { racko: "…" } per-product text (targeting brief / message framing) — object or JSON string (multipart import). */
 function normalizeProductContext(raw) {
   let obj = raw;
   if (typeof obj === 'string') {
@@ -666,6 +667,7 @@ function normalizeFilters(raw) {
       Array.isArray(raw.products) ? raw.products.join(',') : String(raw.products || '')
     ),
     productContext: normalizeProductContext(raw.productContext),
+    productFraming: normalizeProductContext(raw.productFraming),
   };
   if (raw.profileUrl && !profileUrl) {
     throw new Error('Invalid LinkedIn profile URL. Use https://www.linkedin.com/in/username');

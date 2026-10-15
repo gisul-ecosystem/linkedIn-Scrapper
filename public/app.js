@@ -66,9 +66,13 @@ function syncAiUi() {
   updateRunSummary();
 }
 
-const BRIEF_KEY = 'gisul.productBriefs';
+// Per-product text boxes, saved in the browser between runs
+const PRODUCT_TEXT_FIELDS = [
+  { selector: '.product-brief', key: 'gisul.productBriefs' },
+  { selector: '.product-framing', key: 'gisul.productFraming' },
+];
 
-/** Show a "who to target" box only for checked products. */
+/** Show the targeting / framing boxes only for checked products. */
 function syncBriefs() {
   const picked = new Set(selectedProducts());
   document.querySelectorAll('.brief').forEach((el) => {
@@ -77,30 +81,44 @@ function syncBriefs() {
 }
 
 function loadBriefs() {
-  let saved = {};
-  try {
-    saved = JSON.parse(localStorage.getItem(BRIEF_KEY) || '{}') || {};
-  } catch {}
-  document.querySelectorAll('.product-brief').forEach((el) => {
-    if (typeof saved[el.dataset.product] === 'string') el.value = saved[el.dataset.product];
-  });
+  for (const { selector, key } of PRODUCT_TEXT_FIELDS) {
+    let saved = {};
+    try {
+      saved = JSON.parse(localStorage.getItem(key) || '{}') || {};
+    } catch {}
+    document.querySelectorAll(selector).forEach((el) => {
+      if (typeof saved[el.dataset.product] === 'string') el.value = saved[el.dataset.product];
+    });
+  }
 }
 
 function saveBriefs() {
-  try {
-    localStorage.setItem(BRIEF_KEY, JSON.stringify(productContext({ onlySelected: false })));
-  } catch {}
+  for (const { selector, key } of PRODUCT_TEXT_FIELDS) {
+    try {
+      localStorage.setItem(key, JSON.stringify(productTexts(selector, { onlySelected: false })));
+    } catch {}
+  }
 }
 
-/** { racko: "CTOs at EdTech…" } — targeting brief per product. */
-function productContext({ onlySelected = true } = {}) {
+/** { racko: "…" } from one kind of per-product box. */
+function productTexts(selector, { onlySelected = true } = {}) {
   const picked = new Set(selectedProducts());
   const out = {};
-  document.querySelectorAll('.product-brief').forEach((el) => {
+  document.querySelectorAll(selector).forEach((el) => {
     const text = el.value.trim();
     if (text && (!onlySelected || picked.has(el.dataset.product))) out[el.dataset.product] = text;
   });
   return out;
+}
+
+/** { racko: "CTOs at EdTech…" } — targeting brief per product. */
+function productContext() {
+  return productTexts('.product-brief');
+}
+
+/** { racko: "We're launching Racko…" } — what the message should lead with. */
+function productFraming() {
+  return productTexts('.product-framing');
 }
 
 function productLabel(ids) {
@@ -155,6 +173,7 @@ function getFilters() {
     sendMessages: autoSendOn(),
     products: selectedProducts(),
     productContext: productContext(),
+    productFraming: productFraming(),
   };
 }
 
@@ -492,6 +511,7 @@ async function startFileImport(file) {
     fd.append('rescrape', String($('rescrape').checked));
     fd.append('products', selectedProducts().join(','));
     fd.append('productContext', JSON.stringify(productContext()));
+    fd.append('productFraming', JSON.stringify(productFraming()));
     const res = await fetch('/api/scrape/import', { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.statusText);
@@ -845,7 +865,9 @@ document.querySelectorAll('.product-check').forEach((el) =>
     updateRunSummary();
   })
 );
-document.querySelectorAll('.product-brief').forEach((el) => el.addEventListener('input', saveBriefs));
+document
+  .querySelectorAll('.product-brief, .product-framing')
+  .forEach((el) => el.addEventListener('input', saveBriefs));
 loadBriefs();
 syncBriefs();
 document.querySelectorAll('.seg').forEach((b) => b.addEventListener('click', () => setSourceMode(b.dataset.source)));

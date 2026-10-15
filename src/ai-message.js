@@ -16,7 +16,7 @@ const {
 } = require('./profile');
 
 const BANNED_PHRASE_RE =
-  /i hope you(?:'re| are) doing (?:great|well)|i(?:'m| am) reaching out because|reaching out to explore|i came across|noticed your profile|i noticed|would love to|i wanted to|we are a leading provider|exciting opportunity|synergies|potential alignment|your work stands out|caught my attention|customised upskilling programs|customized upskilling programs/i;
+  /i(?:'m| am) reaching out because|reaching out to explore|i came across|noticed your profile|i noticed|would love to|i wanted to|we are a leading provider|exciting opportunity|synergies|potential alignment|your work stands out|caught my attention|customised upskilling programs|customized upskilling programs|looking forward to connecting|let me know your thoughts|i(?:'d| would) be happy to|\bcertainly\b|\babsolutely\b|\bleverag(?:e|es|ing)\b|\bsynergi[sz]e\b|\bholistic\b|\bseamless(?:ly)?\b/i;
 
 function isCSuite(profile) {
   const text = profileBlob(profile).toLowerCase();
@@ -26,7 +26,7 @@ function isCSuite(profile) {
 }
 
 function signOff(profile) {
-  return isCSuite(profile) ? '— Sahil Goyal | CEO, Gisul' : '— Sahil, Gisul';
+  return isCSuite(profile) ? 'Cheers,\nSahil Goyal\nFounder & CEO, Gisul' : 'Cheers,\nSahil';
 }
 
 function detectGeography(profile) {
@@ -47,16 +47,16 @@ function detectGeography(profile) {
 function gisulComboLine(ids) {
   const set = new Set(ids);
   if (set.has('kanonkode') && set.has('aaptor')) {
-    return 'Gisul runs both: KanonKode for enterprise upskilling and Aaptor for AI assessments — standalone or as one system.';
+    return 'At Gisul we run KanonKode for team upskilling and Aaptor for AI assessments, and they work well together.';
   }
   if (set.has('racko') && set.has('kanonkode')) {
-    return 'Gisul runs both: Racko for private cloud infrastructure and KanonKode for enterprise upskilling — standalone or as one system.';
+    return 'At Gisul we run Racko, our own private cloud, and KanonKode for team upskilling. You can use either one or both.';
   }
   if (set.has('racko') && set.has('aaptor')) {
-    return 'Gisul runs both: Racko for private cloud infrastructure and Aaptor for AI assessments — standalone or as one system.';
+    return 'At Gisul we run Racko, our own private cloud, and Aaptor for AI hiring assessments. You can use either one or both.';
   }
   const names = ids.map((id) => getProduct(id)?.name || id);
-  return `Gisul runs both: ${names.join(' and ')} — standalone or as one system.`;
+  return `At Gisul we run ${names.join(' and ')}. You can use either one or both.`;
 }
 
 /**
@@ -143,58 +143,52 @@ function buildFallbackMessage(profile, productId, { relevant = true, reason } = 
   let body;
   if (ids.length >= 3) {
     const stackProof = isRegionalProof(proof)
-      ? `Already live with ${proof}.`
-      : `${proof} run across the stack.`;
-    body = `Hi ${name}, scaling ${company} — at some point infra, team capability, and hiring pipeline all become constraints simultaneously.
+      ? `A lot of ${proof} already use them.`
+      : `${proof} already use them.`;
+    body = `Hi ${name}, hope you're doing well.
 
-Gisul runs an integrated stack: Racko for private cloud infrastructure, KanonKode for enterprise upskilling, Aaptor for AI-driven assessments and hiring. Each works standalone — or as one system. ${stackProof}
+Quick one. At Gisul we run three things: Racko for private cloud, KanonKode for team upskilling and Aaptor for AI hiring assessments. You can use any one of them, or all together. ${stackProof}
 
-Worth a conversation?
+Thought it might be relevant as ${company} grows. Free for a quick chat this week?
 
 ${signOff(profile)}`;
   } else if (ids.length === 2) {
     const comboProof = isRegionalProof(proof)
-      ? `Already live with ${proof}.`
-      : `${proof} are already running this combination.`;
-    body = `Hi ${name},
+      ? `A lot of ${proof} already use them.`
+      : `${proof} already use both.`;
+    body = `Hi ${name}, hope you're doing well.
 
-At ${company}'s scale, more than one system should typically reinforce each other.
+Quick one. ${gisulComboLine(ids)} ${comboProof}
 
-${gisulComboLine(ids)} ${comboProof}
-
-Happy to share how it's structured. Interested?
+Thought it might fit what you're building at ${company}. Free for a quick chat this week?
 
 ${urlLine}
 
 ${signOff(profile)}`;
   } else if (primary === 'racko') {
-    const rackoProof = isRegionalProof(proof)
-      ? `we own the hardware, 30K+ CPUs provisioned for ${proof}`
-      : `we own the hardware, 30K+ CPUs provisioned across EdTech and AI clients ${proofIncluding(proof)}`;
-    body = `Hi ${name}, running compute infrastructure for ${company} at scale — dedicated resource control and uptime probably matter more than hyperscaler flexibility at this point.
+    const rackoProof = isRegionalProof(proof) ? `A lot of ${proof}` : `Teams like ${proof}`;
+    body = `Hi ${name}, hope you're doing well.
 
-Racko (racko.ai) is Gisul's managed private cloud — ${rackoProof}. Not reselling AWS or Azure.
+Quick one. We run Racko (racko.ai) at Gisul, it's our own private cloud on our own hardware. ${rackoProof} moved onto it and now pay a fixed monthly cost instead of an AWS or Azure bill that keeps growing.
 
-Happy to show you what the setup looks like. Worth a quick exchange?
+Thought it might be worth a look for ${company}. Free for a quick chat this week?
 
 ${signOff(profile)}`;
   } else if (primary === 'kanonkode') {
-    body = `Hi ${name}, building capability at ${company} — AI literacy and applied tech upskilling are usually the hardest programmes to find the right delivery partner for.
+    body = `Hi ${name}, hope you're doing well.
 
-KanonKode (kanonkode.com) is Gisul's enterprise upskilling platform — delivered virtually and in-person. Running programmes for ${proof} teams.
+Quick one. We run KanonKode (kanonkode.com) at Gisul, mostly AI and tech upskilling for enterprise teams, online and in person. Teams at ${proof} use us for it.
 
-If this is on your roadmap, happy to share what's worked.
+If upskilling is on the cards at ${company} this year, want me to send over how we run it?
 
 ${signOff(profile)}`;
   } else {
-    const aaptorProof = isRegionalProof(proof)
-      ? `Running for ${proof} right now`
-      : `Running for ${proof}'s hiring programmes right now`;
-    body = `Hi ${name}, at ${company}'s hiring volumes, first-round screening likely takes far more bandwidth than the signal it generates.
+    const aaptorProof = isRegionalProof(proof) ? `A lot of ${proof} use it` : `${proof} use it`;
+    body = `Hi ${name}, hope you're doing well.
 
-Aaptor (aaptor.com) is Gisul's AI interview and assessment platform — voice AI interviews, live proctoring, competency evaluation. ${aaptorProof}.
+Quick one. We built Aaptor (aaptor.com) at Gisul to take first-round screening off recruiters' plates. It runs the AI voice interview and skill test, so your team only talks to the shortlisted people. ${aaptorProof} for their hiring right now.
 
-Worth a quick exchange to see if it fits your current setup?
+Could save ${company} a lot of hours. Open to a quick demo this week?
 
 ${signOff(profile)}`;
   }
@@ -356,54 +350,76 @@ Ignore LinkedIn UI junk (Contact info, Message, Book an appointment, mutual conn
 
 If proceed=false / NO FIT: relevant=false, message="", productId=null.
 
-## MAKE IT SPECIFIC — the most important rule
+## VOICE — Sahil typing a quick LinkedIn note to a peer
+It must read like Sahil wrote it himself on his phone in two minutes. Casual, warm, straight to the point. NOT copywriting, NOT an ad, NOT a polished email.
+- Talk like a person: contractions (we've, it's, you're), plain everyday words, full normal sentences. Use "I" and "we".
+- Start with a real greeting line, the way people actually message: "Hi Priya, hope you're doing well." / "Hey Priya, hope the week's treating you well." / "Hi Priya, hope things are good at Acme." Vary it. A short opener like "Quick one." after the greeting is fine.
+- Then just tell them, simply, what we do and why you thought of them. One small, concrete reason. Like you'd say it out loud.
+- At most ONE number or stat. No feature lists, no stacked fragments ("Our own hardware. 30K+ CPUs. Fixed cost."), no slogans or taglines ("Bills grow. Control doesn't."), no rhetorical contrasts.
+- NEVER use em dashes (—) or en dashes (–). Use commas, full stops, or "and".
+- No corporate jargon (leverage, synergy, holistic, robust, seamless, cutting-edge, empower, solutions). No AI phrases (certainly, absolutely, I'd be happy to, delighted, rest assured).
+- Warm, confident, never pushy or salesy. Not every sentence needs to be clever.
+- Close with one simple, specific ask in casual words: "Free for a quick chat this week?", "Want me to send over how we set it up for Unext?", "Open to a 15 min call sometime this week?". Never vague ("Looking forward to connecting", "Let me know your thoughts").
+- Sign-off is relaxed: "Cheers,\nSahil" (see rules below).
+
+## MAKE IT RELEVANT — why them
 Before writing, pick ONE concrete hook from the profile and put it in "hook":
 - what their company actually does or sells (from experience/about), e.g. "runs a live-class K-12 platform"
 - a specific initiative, stack, programme, market or responsibility they mention, e.g. "moved the LMS to Kubernetes", "runs campus hiring for 2,000 freshers"
 - a recent move: new role, new company, expansion into a region
-The first sentence after the greeting connects that hook to ONE pain that someone in their exact role at that kind of company actually feels. Next: one sentence on how the product removes that pain, with one proof point from a client in the closest industry/geography. Then a soft question tied to that pain.
-Test: if the message would still make sense sent to someone else with the same title, it is too generic — rewrite it.
-Never invent facts about them or their company. If the profile is thin, use their industry plus the operator's targeting brief as the hook.
+Mention that hook casually, as the reason you thought of them ("Saw Acme's been scaling the live classes, so thought of you."). Connect it to ONE problem someone like them actually has. Then one simple line on how we help, with one client name from the closest industry/geography.
+Test: if the message would still make sense sent to someone else with the same title, it is too generic. Rewrite it.
+Never invent facts about them or their company. If the profile is thin, use their industry plus the operator's targeting brief as the reason.
 Banned filler: "at {Company}'s scale", "at some point … become constraints", "probably matter(s) more than", "is usually the hardest", "systems should reinforce each other", "on your roadmap", "in today's fast-paced world".
 
-Pain cues by industry (use the one that matches them):
-- EdTech / online learning infra: admission- and exam-season traffic spikes, live-class/video streaming cost, hyperscaler bills growing with every cohort, student-data residency
-- AI / ML companies: GPU availability and cost, dedicated compute for training/inference without hyperscaler markup
+Problems by industry (use the one that matches them):
+- EdTech / online learning infra: admission- and exam-season traffic spikes, live-class/video streaming cost, cloud bills growing with every cohort, student-data residency
+- AI / ML companies: GPU availability and cost, dedicated compute without hyperscaler markup
 - BFSI / NBFC: data residency and RBI compliance, predictable infra cost; compliance and AI-literacy training at scale
 - GCC / MNC: leadership bench for a growing centre, AI-upskilling mandates from HQ
 - BPO / KPO: volume hiring, attrition, screening bandwidth, AI-readiness of the floor
 - Staffing / RPO: screening throughput, proving candidate quality to clients, proctoring at scale
 
 Example (Racko, CTO at an EdTech live-class platform):
-"Hi Priya,
+"Hi Priya, hope you're doing well.
 
-Live-class platforms get hit hardest in admission season — that's when both latency and the cloud bill spike.
+Saw Acme's been growing the live-class side a lot, so thought of you. Admission season must be rough on the cloud bill.
 
-Racko (racko.ai) is Gisul's managed private cloud on hardware we own — 30K+ CPUs running for EdTech teams like Unext and Edforce, at a fixed monthly cost.
+We run Racko (racko.ai) at Gisul, our own private cloud. Unext and Edforce moved onto it and now pay a fixed monthly cost instead of a surprise AWS bill every peak.
 
-How are you handling peak-season load today?
+Free for a quick chat this week? Happy to walk you through how they set it up.
 
-— Sahil Goyal | CEO, Gisul"
+Cheers,
+Sahil"
+
+Example (Aaptor, TA head at a BPO):
+"Hey Rahul, hope the week's going well.
+
+Quick one. You must be screening a crazy number of people every month at Sutherland-size volumes. We built Aaptor (aaptor.com) at Gisul for exactly that, it runs the first-round voice interview and skill test so your recruiters only talk to the shortlisted ones.
+
+Want me to send over a quick demo link?
+
+Cheers,
+Sahil"
 
 ## MESSAGE RULES (proceed=true only)
-- Under 120 words. Cut context before cutting CTA.
-- Already 1st connections — do NOT re-introduce or mention the connection.
-- First line MUST be only "Hi {FirstName}," — nothing else on that line.
+- Under 120 words. Shorter is better. Cut context before cutting the ask.
+- Already 1st connections — do NOT re-introduce yourself or mention the connection.
+- First line is the greeting: "Hi {FirstName}," or "Hey {FirstName}," plus an optional short pleasantry ("hope you're doing well."). Nothing else on that line.
 - NEVER write "{Name}, {Title} at {Company}." or "Hi {Name}, VP at …" — they already know their job. Do not recap title/company as a greeting label.
-- After the greeting, go straight into the problem or product. You may mention the company later in a normal sentence (e.g. "at Bellfast's hiring volumes") — never as a role dump.
+- You may mention the company in a normal sentence, never as a role dump.
 - Never paste raw headline, education, or duplicated employer text (SynechronSynechron, "Jain (Deemed-to-be Univ").
-- Sparse profile → skip title recap; use industry or company only inside the pitch. If company is missing, say "your organisation".
-- Single brand: one product, one geo/sector proof point, one pain. Frame as Gisul's platform (e.g. "KanonKode is Gisul's enterprise upskilling…").
-- Combined (two products): one shared problem. Lead with Gisul as the parent, then the two platforms — e.g. "Gisul runs both: KanonKode for enterprise upskilling and Aaptor for AI assessments — standalone or as one system." Never present two products as unrelated brands.
-- Ecosystem: Gisul's integrated stack — not three products listed as separate companies.
-- NEVER ask for a call in the first message. End with low-friction question or "happy to share more."
-- C-suite / VP+: sign off "— Sahil Goyal | CEO, Gisul"
-- Others: "— Sahil, Gisul"
-- Include product URL(s) naturally (racko.ai / kanonkode.com / aaptor.com).
-- Peer-to-peer, informed, direct. Not salesy.
+- Sparse profile → skip title recap; use industry or company only inside the pitch. If company is missing, say "your team".
+- Single brand: one product, one client name, one problem. Say it simply, e.g. "We run KanonKode at Gisul, it's our tech upskilling platform."
+- Combined (two products): one shared problem, said simply, e.g. "At Gisul we run KanonKode for upskilling and Aaptor for AI assessments, and they work well together." Never present them as unrelated brands.
+- Ecosystem: "At Gisul we run three things…" said casually, not a list of three separate companies.
+- End with ONE simple, specific ask (see VOICE). A short chat or call this week is fine.
+- C-suite / VP+: sign off "Cheers,\nSahil Goyal\nFounder & CEO, Gisul"
+- Others: "Cheers,\nSahil"
+- Include product URL(s) once, naturally (racko.ai / kanonkode.com / aaptor.com).
 
 ## NEVER WRITE
-"I hope you are doing great/well", "I'm reaching out because/from", "I came across/noticed your profile", "Would love to/I wanted to", "We are a leading provider of", "Exciting opportunity/synergies/potential alignment", "Your work stands out/caught my attention", "Customised upskilling programs", "Reaching out to explore", "I noticed", duplicated company names, university/education fragments in the opener, "{Name}, {Title} at {Company}."`;
+"I'm reaching out because/from", "I came across/noticed your profile", "Would love to/I wanted to", "We are a leading provider of", "Exciting opportunity/synergies/potential alignment", "Your work stands out/caught my attention", "Customised upskilling programs", "Reaching out to explore", "I noticed", "Looking forward to connecting", "Let me know your thoughts", "I'd be happy to", "Certainly", "Absolutely", "leverage", "holistic", "seamless", em dashes (—), duplicated company names, university/education fragments in the opener, "{Name}, {Title} at {Company}."`;
 }
 
 function allowedProductsBlock(allowed) {
@@ -432,10 +448,24 @@ When it matches, write the message from the brief's angle: the pain should be th
 `;
 }
 
-function userPrompt(profile, rag, allowed = null, briefs = {}) {
+/** Operator's "message framing" per product — the point the message must lead with. */
+function framingBlock(framing) {
+  const entries = Object.entries(framing || {}).filter(([, text]) => text);
+  if (!entries.length) return '';
+  const lines = entries
+    .map(([id, text]) => `- ${getProduct(id)?.name || id} (${id}): ${text}`)
+    .join('\n');
+  return `## Operator's message framing (THE MAIN POINT of the message)
+${lines}
+When you pitch a product listed here, build the message around this point. It goes right after the greeting, tied to why you thought of this person, then one client name, then the ask. Keep its meaning exactly, but say it in Sahil's casual voice and fix any spelling or grammar (the operator typed it quickly). Don't paste it word for word if it reads awkwardly. Never add claims it doesn't make (no dates, prices or offers that aren't in it).
+
+`;
+}
+
+function userPrompt(profile, rag, allowed = null, briefs = {}, framing = {}) {
   const p = cleanProfileForAi(profile);
   const geo = detectGeography(p);
-  return `${allowedProductsBlock(allowed)}${targetingBriefBlock(briefs)}## Product knowledge (RAG — facts/URLs only)
+  return `${allowedProductsBlock(allowed)}${targetingBriefBlock(briefs)}${framingBlock(framing)}## Product knowledge (RAG — facts/URLs only)
 ${rag.contextBlock || '(none)'}
 
 ## Cleaned LinkedIn profile
@@ -488,10 +518,10 @@ function stripRoleDumpOpener(message, profile) {
   const nl = text.search(/\r?\n/);
   const first = (nl === -1 ? text : text.slice(0, nl)).trim();
   const rest = nl === -1 ? '' : text.slice(nl).replace(/^\s+/, '\n\n');
-  const addressesThem = new RegExp(`^(?:Hi\\s+)?${escaped}\\b`, 'i').test(first);
+  const addressesThem = new RegExp(`^(?:(?:Hi|Hey|Hello)\\s+)?${escaped}\\b`, 'i').test(first);
   // Name then title via "at", em/en dash, hyphen, or comma (not only "at")
   const nameThenTitleSep = new RegExp(
-    `^(?:Hi\\s+)?${escaped}\\s*[,:—–-]\\s*.+`,
+    `^(?:(?:Hi|Hey|Hello)\\s+)?${escaped}\\s*[,:—–-]\\s*.+`,
     'i'
   );
   const hasTitleSeparator =
@@ -504,7 +534,7 @@ function stripRoleDumpOpener(message, profile) {
     TITLE_DUMP_RE.test(first) &&
     hasTitleSeparator &&
     !/\?/.test(first) &&
-    !/\b(scale|hiring|volumes|building|running|capability|infrastructure|worth|interested|happy to)\b/i.test(
+    !/\b(hope|quick one|scale|hiring|volumes|building|running|capability|infrastructure|worth|interested|happy to)\b/i.test(
       first
     );
 
@@ -531,6 +561,9 @@ function cleanOutbound(message, profile) {
     .replace(/\bHiring:[\s\S]*?(?=\n\n|$)/gi, '')
     .replace(/\bShow job\b/gi, '')
     .replace(/\bHighlights\b/gi, '')
+    // Em/en dashes read as AI-written — drop them from sign-offs, commas elsewhere
+    .replace(/^[—–-]\s*(?=Sahil)/gm, '')
+    .replace(/\s*[—–]\s*/g, ', ')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -561,17 +594,19 @@ function messageIssue(msg, { forbiddenProducts = [], maxWords = 120 } = {}) {
 }
 
 /** One targeted AI fix of a draft (generic, too long, banned phrase, wrong product). */
-async function rewriteMessage(draft, issue, { profile, product, brief, hook, useClaude }) {
+async function rewriteMessage(draft, issue, { profile, product, brief, framing, hook, useClaude }) {
   const p = cleanProfileForAi(profile);
   const system =
     "You fix LinkedIn first-messages written for Sahil Goyal, CEO of Gisul. Return ONLY the corrected message text — no JSON, no quotes, no commentary.";
   const user = `Fix this LinkedIn DM. Problem: ${issue}
 
-Keep: "Hi ${firstName(p.name) || 'there'}," as the first line, one specific hook about the person, one pain, ${product.name} framed as Gisul's platform (${product.url.replace(/\n/g, ', ')}), one proof point, a soft question (never ask for a call), and the sign-off "${signOff(p)}".
+Keep: a casual greeting first line ("Hi ${firstName(p.name) || 'there'}, hope you're doing well."), one specific reason you thought of them, one problem, ${product.name} as something we run at Gisul (${product.url.replace(/\n/g, ', ')}), one client name, ONE simple specific ask (e.g. "Free for a quick chat this week?"), and the sign-off:
+${signOff(p)}
 Under 120 words. Never invent facts. No "I came across", "I noticed", "I wanted to", "would love to", "at X's scale".
+Voice: Sahil typing a quick note to a peer on his phone. Casual, warm, plain words, contractions, normal full sentences. It must NOT read like copywriting or an AI: no slogans, no stacked fragments, no feature lists, at most one number, no em dashes. No jargon (leverage, holistic, seamless), no AI phrases (certainly, absolutely, I'd be happy to), no bullet points.
 
 Person: ${p.name || ''} — ${p.jobTitle || p.headline || ''}${p.company ? ` at ${p.company}` : ''}${p.location ? ` (${p.location})` : ''}
-${hook ? `Hook to use: ${hook}\n` : ''}${brief ? `Operator's targeting brief: ${brief}\n` : ''}
+${hook ? `Hook to use: ${hook}\n` : ''}${brief ? `Operator's targeting brief: ${brief}\n` : ''}${framing ? `Main point the message must lead with (keep its meaning, casual wording): ${framing}\n` : ''}
 DRAFT:
 ${draft}`;
 
@@ -690,27 +725,37 @@ function formatDecision(parsed, product, score) {
 
 /**
  * @param {object} profile
- * @param {{ allowedProducts?: string[], productContext?: Record<string, string> }} [opts]
+ * @param {{ allowedProducts?: string[], productContext?: Record<string, string>, productFraming?: Record<string, string> }} [opts]
  * allowedProducts — product ids selected for this run; empty = all products.
  * productContext — operator's "who to target" brief per product id (hard filter + message angle).
+ * productFraming — operator's main point per product id (e.g. "we're launching Racko").
  */
-async function generateOutreachMessage(profile, { allowedProducts = [], productContext = {} } = {}) {
+async function generateOutreachMessage(
+  profile,
+  { allowedProducts = [], productContext = {}, productFraming = {} } = {}
+) {
   const cleaned = cleanProfileForAi(profile);
   const allowed = parseProductIds([].concat(allowedProducts || []).join(','));
   const restricted = allowed.length > 0 && allowed.length < listProducts().length;
   const restrictIds = (ids) => (restricted ? ids.filter((id) => allowed.includes(id)) : ids);
-  const briefs = {};
-  for (const [id, text] of Object.entries(productContext || {})) {
-    if (text && (!restricted || allowed.includes(id))) briefs[id] = String(text).trim();
-  }
+  const keepSelected = (texts) => {
+    const out = {};
+    for (const [id, text] of Object.entries(texts || {})) {
+      if (text && (!restricted || allowed.includes(id))) out[id] = String(text).trim();
+    }
+    return out;
+  };
+  const briefs = keepSelected(productContext);
+  const framings = keepSelected(productFraming);
   const briefFor = (ids) => ids.map((id) => briefs[id]).filter(Boolean).join(' / ');
+  const framingFor = (ids) => ids.map((id) => framings[id]).filter(Boolean).join(' / ');
 
   const heuristicIds = restrictIds(parseProductIds(heuristicProductId(cleaned)));
   const heuristicFirst = heuristicIds.join('+') || null;
   const preferProducts = heuristicIds.length ? heuristicIds : restricted ? allowed : [];
   const rag = retrieveForProfile(cleaned, { preferProducts });
   const system = systemPrompt();
-  const user = userPrompt(cleaned, rag, restricted ? allowed : null, briefs);
+  const user = userPrompt(cleaned, rag, restricted ? allowed : null, briefs, framings);
   logAiInput(cleaned);
 
   const hasClaude = Boolean(ANTHROPIC_API_KEY);
@@ -828,6 +873,7 @@ async function generateOutreachMessage(profile, { allowedProducts = [], productC
           profile: cleaned,
           product,
           brief: briefFor(productIds),
+          framing: framingFor(productIds),
           hook,
           useClaude: hasClaude,
         });
@@ -841,7 +887,9 @@ async function generateOutreachMessage(profile, { allowedProducts = [], productC
 
     // 120–140 words is tolerable; anything else still wrong → template
     if (issue && (messageIssue(message, { forbiddenProducts, maxWords: 140 }) || !message)) {
-      console.warn(`[ai] still not sendable (${issue}) — template for ${product.id}`);
+      console.warn(
+        `[ai] still not sendable (${issue}) — template for ${product.id}${framingFor(productIds) ? ' (framing not in template)' : ''}`
+      );
       message = buildFallbackMessage(cleaned, product.id).message;
     }
 

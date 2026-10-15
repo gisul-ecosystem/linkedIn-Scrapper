@@ -138,12 +138,17 @@ async function runScrapeJob(userId, filters, onProgress) {
     const allowedProducts = Array.isArray(filters.products) ? filters.products : [];
     const productContext =
       filters.productContext && typeof filters.productContext === 'object' ? filters.productContext : {};
+    const productFraming =
+      filters.productFraming && typeof filters.productFraming === 'object' ? filters.productFraming : {};
     if (useAi) {
       await log(
         `AI product matching: ${allowedProducts.length ? allowedProducts.join(' + ') : 'racko + kanonkode + aaptor'} (RAG)`
       );
       for (const [id, brief] of Object.entries(productContext)) {
         await log(`Targeting brief — ${id}: ${brief.slice(0, 160)}`);
+      }
+      for (const [id, framing] of Object.entries(productFraming)) {
+        await log(`Message framing — ${id}: ${framing.slice(0, 160)}`);
       }
     }
     if (usingImport) {
@@ -284,7 +289,11 @@ async function runScrapeJob(userId, filters, onProgress) {
             `[${i + 1}] fields → about=${(record.about || '').length}ch exp=${(record.experience || '').length}ch title="${record.jobTitle || ''}"`
           );
           await log(`[${i + 1}] RAG + AI matching…`);
-          const outreach = await generateOutreachMessage(record, { allowedProducts, productContext });
+          const outreach = await generateOutreachMessage(record, {
+            allowedProducts,
+            productContext,
+            productFraming,
+          });
           record.relevant = outreach.relevant;
           record.relevanceScore = outreach.relevanceScore;
           record.matchSignals = outreach.matchSignals || [];
