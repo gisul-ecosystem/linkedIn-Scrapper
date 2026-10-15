@@ -348,11 +348,42 @@ Ignore LinkedIn UI junk (Contact info, Message, Book an appointment, mutual conn
   "productIds": ["..."],
   "relevanceScore": 0-100,
   "matchSignals": ["short evidence"],
+  "briefMatch": true|false|null,
+  "hook": "the concrete profile detail the message opens on",
   "reason": "1-2 sentences (same as fitReason ok)",
   "message": "LinkedIn DM or empty if proceed=false"
 }
 
 If proceed=false / NO FIT: relevant=false, message="", productId=null.
+
+## MAKE IT SPECIFIC — the most important rule
+Before writing, pick ONE concrete hook from the profile and put it in "hook":
+- what their company actually does or sells (from experience/about), e.g. "runs a live-class K-12 platform"
+- a specific initiative, stack, programme, market or responsibility they mention, e.g. "moved the LMS to Kubernetes", "runs campus hiring for 2,000 freshers"
+- a recent move: new role, new company, expansion into a region
+The first sentence after the greeting connects that hook to ONE pain that someone in their exact role at that kind of company actually feels. Next: one sentence on how the product removes that pain, with one proof point from a client in the closest industry/geography. Then a soft question tied to that pain.
+Test: if the message would still make sense sent to someone else with the same title, it is too generic — rewrite it.
+Never invent facts about them or their company. If the profile is thin, use their industry plus the operator's targeting brief as the hook.
+Banned filler: "at {Company}'s scale", "at some point … become constraints", "probably matter(s) more than", "is usually the hardest", "systems should reinforce each other", "on your roadmap", "in today's fast-paced world".
+
+Pain cues by industry (use the one that matches them):
+- EdTech / online learning infra: admission- and exam-season traffic spikes, live-class/video streaming cost, hyperscaler bills growing with every cohort, student-data residency
+- AI / ML companies: GPU availability and cost, dedicated compute for training/inference without hyperscaler markup
+- BFSI / NBFC: data residency and RBI compliance, predictable infra cost; compliance and AI-literacy training at scale
+- GCC / MNC: leadership bench for a growing centre, AI-upskilling mandates from HQ
+- BPO / KPO: volume hiring, attrition, screening bandwidth, AI-readiness of the floor
+- Staffing / RPO: screening throughput, proving candidate quality to clients, proctoring at scale
+
+Example (Racko, CTO at an EdTech live-class platform):
+"Hi Priya,
+
+Live-class platforms get hit hardest in admission season — that's when both latency and the cloud bill spike.
+
+Racko (racko.ai) is Gisul's managed private cloud on hardware we own — 30K+ CPUs running for EdTech teams like Unext and Edforce, at a fixed monthly cost.
+
+How are you handling peak-season load today?
+
+— Sahil Goyal | CEO, Gisul"
 
 ## MESSAGE RULES (proceed=true only)
 - Under 120 words. Cut context before cutting CTA.
@@ -386,10 +417,25 @@ If the person is not a genuine fit for a selected product, set proceed=false.
 `;
 }
 
-function userPrompt(profile, rag, allowed = null) {
+/** Operator's "who to target" brief per product — a hard filter plus the message angle. */
+function targetingBriefBlock(briefs) {
+  const entries = Object.entries(briefs || {}).filter(([, text]) => text);
+  if (!entries.length) return '';
+  const lines = entries
+    .map(([id, text]) => `- ${getProduct(id)?.name || id} (${id}): ${text}`)
+    .join('\n');
+  return `## Operator's targeting brief (HARD FILTER)
+${lines}
+A product with a brief may only be pitched if this person matches that brief — check their company type, industry and role against it using the profile. Not a match → do not pitch that product (proceed=false if nothing else fits). Set "briefMatch" to true/false for the product you pitch (null if it has no brief).
+When it matches, write the message from the brief's angle: the pain should be the one a person like the brief describes actually has.
+
+`;
+}
+
+function userPrompt(profile, rag, allowed = null, briefs = {}) {
   const p = cleanProfileForAi(profile);
   const geo = detectGeography(p);
-  return `${allowedProductsBlock(allowed)}## Product knowledge (RAG — facts/URLs only)
+  return `${allowedProductsBlock(allowed)}${targetingBriefBlock(briefs)}## Product knowledge (RAG — facts/URLs only)
 ${rag.contextBlock || '(none)'}
 
 ## Cleaned LinkedIn profile
@@ -405,9 +451,10 @@ Education: ${p.education || '(empty)'}
 Profile URL: ${p.profileUrl || ''}
 
 ## Task
-Step 1: Fit assessment (brands, fitReason, confidence, proceed).
+Step 1: Fit assessment (brands, fitReason, confidence, proceed) — including the targeting brief, if any.
 Step 2: Apply pitch matrix → productId / productIds.
-Step 3: If proceed, write the LinkedIn first-message per FINAL rules and sample tone. If No — empty message.`;
+Step 3: Pick the hook — the most specific detail in this profile.
+Step 4: If proceed, write the LinkedIn first-message per MAKE IT SPECIFIC and MESSAGE RULES. If No — empty message.`;
 }
 
 function parseJsonContent(raw) {
@@ -465,11 +512,18 @@ function stripRoleDumpOpener(message, profile) {
   return `Hi ${name},${rest || '\n\n'}`.replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function sanitizeOutboundMessage(message, profile, product, { enforceLength = true } = {}) {
+const GENERIC_FILLER_RE =
+  /\bat [^.\n]{1,40}'s (?:scale|hiring volumes)\b|\bat some point\b[^.\n]*\bconstraints?\b|\bprobably matters? more than\b|\bis usually the hardest\b|\breinforce each other\b|\bon your roadmap\b|\bfast-paced\b/i;
+
+/** Strip LinkedIn UI junk + role-dump opener, ensure sign-off. No fallbacks. */
+function cleanOutbound(message, profile) {
   let msg = String(message || '').trim();
   if (!msg) return '';
 
   msg = msg
+    .replace(/^```(?:\w+)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .replace(/^"([\s\S]*)"$/, '$1')
     .replace(/\bContact info\b[\s\S]*?(?=\n\n|$)/gi, '')
     .replace(/\bBook an appointment\b/gi, '')
     .replace(/\b\d+\+?\s*connections\b/gi, '')
@@ -482,36 +536,47 @@ function sanitizeOutboundMessage(message, profile, product, { enforceLength = tr
     .trim();
 
   msg = stripRoleDumpOpener(msg, profile);
-
-  if (BANNED_PHRASE_RE.test(msg) || /Contact info|Book an appointment|mutual connections|Hiring:/i.test(msg)) {
-    return buildFallbackMessage(profile, product?.id || 'kanonkode').message;
-  }
-
-  // Hard cutoff only — 120–140 handled via compression pass in generateOutreachMessage
-  if (enforceLength && wordCount(msg) > 140) {
-    return buildFallbackMessage(profile, product?.id || 'kanonkode').message;
-  }
-
-  if (!/Sahil/i.test(msg)) {
-    msg = `${msg}\n\n${signOff(profile)}`;
-  }
-
+  if (msg && !/Sahil/i.test(msg)) msg = `${msg}\n\n${signOff(profile)}`;
   return msg.slice(0, 1200);
 }
 
-async function compressMessage(message, { useClaude }) {
-  const system =
-    'You compress LinkedIn first-messages. Return ONLY the shortened message text — no JSON, no quotes, no commentary.';
-  const user = `Rewrite this LinkedIn DM to under 120 words. Keep: greeting, product/Gisul framing, one proof point, CTA, sign-off, and any URLs. Cut context and repetition first. Do not add fluff.
+/** What's wrong with a draft, or '' if it's sendable. */
+function messageIssue(msg, { forbiddenProducts = [], maxWords = 120 } = {}) {
+  if (!msg) return 'The draft is empty — write the message.';
+  const banned = msg.match(BANNED_PHRASE_RE);
+  if (banned) return `It uses the banned phrase "${banned[0]}" — remove it.`;
+  const filler = msg.match(GENERIC_FILLER_RE);
+  if (filler) {
+    return `It uses generic filler ("${filler[0]}") — replace it with something specific to this person's company or work.`;
+  }
+  const leaked = forbiddenProducts.filter((p) =>
+    new RegExp(`\\b${p.name}\\b|${p.url.replace(/^https?:\/\//, '').replace(/\/$/, '').replace(/\./g, '\\.')}`, 'i').test(msg)
+  );
+  if (leaked.length) {
+    return `It mentions ${leaked.map((p) => p.name).join(', ')}, which is not selected for this run — remove every mention and pitch only the selected product(s).`;
+  }
+  const wc = wordCount(msg);
+  if (wc > maxWords) return `It is ${wc} words — cut it to under 120 (cut context before the CTA).`;
+  return '';
+}
 
-MESSAGE:
-${message}`;
+/** One targeted AI fix of a draft (generic, too long, banned phrase, wrong product). */
+async function rewriteMessage(draft, issue, { profile, product, brief, hook, useClaude }) {
+  const p = cleanProfileForAi(profile);
+  const system =
+    "You fix LinkedIn first-messages written for Sahil Goyal, CEO of Gisul. Return ONLY the corrected message text — no JSON, no quotes, no commentary.";
+  const user = `Fix this LinkedIn DM. Problem: ${issue}
+
+Keep: "Hi ${firstName(p.name) || 'there'}," as the first line, one specific hook about the person, one pain, ${product.name} framed as Gisul's platform (${product.url.replace(/\n/g, ', ')}), one proof point, a soft question (never ask for a call), and the sign-off "${signOff(p)}".
+Under 120 words. Never invent facts. No "I came across", "I noticed", "I wanted to", "would love to", "at X's scale".
+
+Person: ${p.name || ''} — ${p.jobTitle || p.headline || ''}${p.company ? ` at ${p.company}` : ''}${p.location ? ` (${p.location})` : ''}
+${hook ? `Hook to use: ${hook}\n` : ''}${brief ? `Operator's targeting brief: ${brief}\n` : ''}
+DRAFT:
+${draft}`;
 
   const raw = useClaude ? await callClaude(system, user) : await callOpenAICompress(system, user);
-  return String(raw || '')
-    .replace(/^```(?:\w+)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  return String(raw || '').trim();
 }
 
 /** OpenAI without forcing JSON (compression returns plain text). */
@@ -625,21 +690,27 @@ function formatDecision(parsed, product, score) {
 
 /**
  * @param {object} profile
- * @param {{ allowedProducts?: string[] }} [opts]
+ * @param {{ allowedProducts?: string[], productContext?: Record<string, string> }} [opts]
  * allowedProducts — product ids selected for this run; empty = all products.
+ * productContext — operator's "who to target" brief per product id (hard filter + message angle).
  */
-async function generateOutreachMessage(profile, { allowedProducts = [] } = {}) {
+async function generateOutreachMessage(profile, { allowedProducts = [], productContext = {} } = {}) {
   const cleaned = cleanProfileForAi(profile);
   const allowed = parseProductIds([].concat(allowedProducts || []).join(','));
   const restricted = allowed.length > 0 && allowed.length < listProducts().length;
   const restrictIds = (ids) => (restricted ? ids.filter((id) => allowed.includes(id)) : ids);
+  const briefs = {};
+  for (const [id, text] of Object.entries(productContext || {})) {
+    if (text && (!restricted || allowed.includes(id))) briefs[id] = String(text).trim();
+  }
+  const briefFor = (ids) => ids.map((id) => briefs[id]).filter(Boolean).join(' / ');
 
   const heuristicIds = restrictIds(parseProductIds(heuristicProductId(cleaned)));
   const heuristicFirst = heuristicIds.join('+') || null;
   const preferProducts = heuristicIds.length ? heuristicIds : restricted ? allowed : [];
   const rag = retrieveForProfile(cleaned, { preferProducts });
   const system = systemPrompt();
-  const user = userPrompt(cleaned, rag, restricted ? allowed : null);
+  const user = userPrompt(cleaned, rag, restricted ? allowed : null, briefs);
   logAiInput(cleaned);
 
   const hasClaude = Boolean(ANTHROPIC_API_KEY);
@@ -682,7 +753,21 @@ async function generateOutreachMessage(profile, { allowedProducts = [] } = {}) {
       }
     }
 
-    if ((!proceed || !product) && heuristicFirst && looksLikeEmptyProfileComplaint(parsed.reason || parsed.fitReason)) {
+    // A product with a targeting brief the person doesn't match is a skip
+    let briefMiss = false;
+    if (product && parsed.briefMatch === false && briefFor(product.productIds || parseProductIds(product.id))) {
+      briefMiss = true;
+      product = null;
+    }
+
+    // Heuristic can't check a targeting brief, so no override when one is set
+    if (
+      (!proceed || !product) &&
+      heuristicFirst &&
+      !briefMiss &&
+      !briefFor(heuristicIds) &&
+      looksLikeEmptyProfileComplaint(parsed.reason || parsed.fitReason)
+    ) {
       console.warn(`[ai] empty-profile false negative — heuristic=${heuristicFirst}`);
       const fallback = buildFallbackMessage(cleaned, heuristicFirst, {
         reason: `Heuristic override (strong signals): ${String(parsed.reason || parsed.fitReason || '').slice(0, 120)}`,
@@ -698,7 +783,9 @@ async function generateOutreachMessage(profile, { allowedProducts = [] } = {}) {
 
     if (!proceed || score < AI_CONFIDENCE_MIN_SCORE || !product) {
       formatDecision({ ...parsed, proceed: false }, null, score);
-      const skipReason = outOfScope
+      const skipReason = briefMiss
+        ? `Doesn't match targeting brief. ${parsed.reason || parsed.fitReason || ''}`
+        : outOfScope
         ? `Fits ${outOfScope} — not a selected product. ${parsed.reason || parsed.fitReason || ''}`
         : String(parsed.reason || parsed.fitReason || 'Below relevance threshold or no product fit');
       console.log(`[ai] decision: relevant=false score=${score} reason=${skipReason.slice(0, 140)}`);
@@ -722,36 +809,40 @@ async function generateOutreachMessage(profile, { allowedProducts = [] } = {}) {
       };
     }
 
-    let message = sanitizeOutboundMessage(parsed.message, cleaned, product, {
-      enforceLength: false,
-    });
-    let wc = wordCount(message);
+    const productIds = product.productIds || parseProductIds(product.id);
+    const forbiddenProducts = listProducts().filter((p) => !productIds.includes(p.id));
+    const hook = String(parsed.hook || '').trim();
+    if (hook) console.log(`[ai] hook: ${hook.slice(0, 160)}`);
 
-    if (narrowed) {
-      // Model's draft pitches unselected products — use the template for the kept ones
-      console.warn(`[ai] model pitched unselected products — template for ${product.id}`);
-      message = buildFallbackMessage(cleaned, product.id).message;
-    } else if (wc > 140) {
-      console.warn(`[ai] message ${wc} words > 140 — heuristic fallback`);
-      message = buildFallbackMessage(cleaned, product.id).message;
-    } else if (wc > 120) {
+    let message = cleanOutbound(parsed.message, cleaned);
+    let issue = messageIssue(message, { forbiddenProducts });
+    if (narrowed && !issue) {
+      issue = `Pitch only ${product.name} — remove every other Gisul platform.`;
+    }
+
+    // Fix problems with a targeted rewrite instead of dropping to a generic template
+    for (let attempt = 1; issue && attempt <= 2; attempt++) {
+      console.warn(`[ai] draft issue (rewrite ${attempt}): ${issue}`);
       try {
-        console.log(`[ai] message ${wc} words — one-shot compression`);
-        const compressed = await compressMessage(message, { useClaude: hasClaude });
-        message = sanitizeOutboundMessage(compressed, cleaned, product, {
-          enforceLength: false,
+        const rewritten = await rewriteMessage(message, issue, {
+          profile: cleaned,
+          product,
+          brief: briefFor(productIds),
+          hook,
+          useClaude: hasClaude,
         });
-        wc = wordCount(message);
-        if (wc > 140) {
-          console.warn(`[ai] still ${wc} words after compress — heuristic fallback`);
-          message = buildFallbackMessage(cleaned, product.id).message;
-        } else {
-          console.log(`[ai] compressed to ${wc} words`);
-        }
-      } catch (compressErr) {
-        console.warn(`[ai] compress failed: ${compressErr.message} — heuristic fallback`);
-        message = buildFallbackMessage(cleaned, product.id).message;
+        message = cleanOutbound(rewritten, cleaned);
+        issue = messageIssue(message, { forbiddenProducts });
+      } catch (rewriteErr) {
+        console.warn(`[ai] rewrite failed: ${rewriteErr.message}`);
+        break;
       }
+    }
+
+    // 120–140 words is tolerable; anything else still wrong → template
+    if (issue && (messageIssue(message, { forbiddenProducts, maxWords: 140 }) || !message)) {
+      console.warn(`[ai] still not sendable (${issue}) — template for ${product.id}`);
+      message = buildFallbackMessage(cleaned, product.id).message;
     }
 
     formatDecision(parsed, product, score);
@@ -770,6 +861,7 @@ async function generateOutreachMessage(profile, { allowedProducts = [] } = {}) {
       relevanceScore: score,
       reason: String(parsed.reason || parsed.fitReason || '').slice(0, 400),
       matchSignals: Array.isArray(parsed.matchSignals) ? parsed.matchSignals.slice(0, 8) : [],
+      hook: hook || null,
       message,
       rag: {
         builtAt: rag.builtAt,

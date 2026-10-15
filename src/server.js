@@ -589,6 +589,7 @@ app.post('/api/scrape/import', upload.single('file'), async (req, res) => {
       aiMessages: req.body?.aiMessages,
       rescrape: req.body?.rescrape,
       products: req.body?.products,
+      productContext: req.body?.productContext,
       sendMessages: false,
     });
   } catch (err) {
@@ -624,6 +625,26 @@ app.get('/api/job', (_req, res) => {
   res.json(getJobStatus(USER_ID));
 });
 
+/** { racko: "who to target…" } — accepts an object or JSON string (multipart import). */
+function normalizeProductContext(raw) {
+  let obj = raw;
+  if (typeof obj === 'string') {
+    try {
+      obj = JSON.parse(obj || '{}');
+    } catch {
+      obj = {};
+    }
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return {};
+  const out = {};
+  for (const [key, value] of Object.entries(obj)) {
+    const [id] = parseProductIds(key);
+    const text = String(value || '').replace(/\s+/g, ' ').trim().slice(0, 600);
+    if (id && text) out[id] = text;
+  }
+  return out;
+}
+
 function normalizeFilters(raw) {
   const { normalizeProfileUrl } = require('./utils');
   const profileUrl = normalizeProfileUrl(raw.profileUrl || raw.profile_url || '');
@@ -644,6 +665,7 @@ function normalizeFilters(raw) {
     products: parseProductIds(
       Array.isArray(raw.products) ? raw.products.join(',') : String(raw.products || '')
     ),
+    productContext: normalizeProductContext(raw.productContext),
   };
   if (raw.profileUrl && !profileUrl) {
     throw new Error('Invalid LinkedIn profile URL. Use https://www.linkedin.com/in/username');

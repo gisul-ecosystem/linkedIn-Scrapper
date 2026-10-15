@@ -136,10 +136,15 @@ async function runScrapeJob(userId, filters, onProgress) {
       await log(`Mode: ${filters.connectionType} | ${buildSearchUrl(filters)}`);
     }
     const allowedProducts = Array.isArray(filters.products) ? filters.products : [];
+    const productContext =
+      filters.productContext && typeof filters.productContext === 'object' ? filters.productContext : {};
     if (useAi) {
       await log(
         `AI product matching: ${allowedProducts.length ? allowedProducts.join(' + ') : 'racko + kanonkode + aaptor'} (RAG)`
       );
+      for (const [id, brief] of Object.entries(productContext)) {
+        await log(`Targeting brief — ${id}: ${brief.slice(0, 160)}`);
+      }
     }
     if (usingImport) {
       await log('File import — drafts go to queue only. Nothing is sent until Send to all.');
@@ -279,7 +284,7 @@ async function runScrapeJob(userId, filters, onProgress) {
             `[${i + 1}] fields → about=${(record.about || '').length}ch exp=${(record.experience || '').length}ch title="${record.jobTitle || ''}"`
           );
           await log(`[${i + 1}] RAG + AI matching…`);
-          const outreach = await generateOutreachMessage(record, { allowedProducts });
+          const outreach = await generateOutreachMessage(record, { allowedProducts, productContext });
           record.relevant = outreach.relevant;
           record.relevanceScore = outreach.relevanceScore;
           record.matchSignals = outreach.matchSignals || [];

@@ -61,7 +61,46 @@ function setSourceMode(mode) {
 
 function syncAiUi() {
   $('productChips').classList.toggle('disabled', !$('aiMessages').checked);
+  $('productBriefs').classList.toggle('disabled', !$('aiMessages').checked);
+  syncBriefs();
   updateRunSummary();
+}
+
+const BRIEF_KEY = 'gisul.productBriefs';
+
+/** Show a "who to target" box only for checked products. */
+function syncBriefs() {
+  const picked = new Set(selectedProducts());
+  document.querySelectorAll('.brief').forEach((el) => {
+    el.hidden = !picked.has(el.dataset.product);
+  });
+}
+
+function loadBriefs() {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(BRIEF_KEY) || '{}') || {};
+  } catch {}
+  document.querySelectorAll('.product-brief').forEach((el) => {
+    if (typeof saved[el.dataset.product] === 'string') el.value = saved[el.dataset.product];
+  });
+}
+
+function saveBriefs() {
+  try {
+    localStorage.setItem(BRIEF_KEY, JSON.stringify(productContext({ onlySelected: false })));
+  } catch {}
+}
+
+/** { racko: "CTOs at EdTech…" } — targeting brief per product. */
+function productContext({ onlySelected = true } = {}) {
+  const picked = new Set(selectedProducts());
+  const out = {};
+  document.querySelectorAll('.product-brief').forEach((el) => {
+    const text = el.value.trim();
+    if (text && (!onlySelected || picked.has(el.dataset.product))) out[el.dataset.product] = text;
+  });
+  return out;
 }
 
 function productLabel(ids) {
@@ -115,6 +154,7 @@ function getFilters() {
     aiMessages: $('aiMessages').checked,
     sendMessages: autoSendOn(),
     products: selectedProducts(),
+    productContext: productContext(),
   };
 }
 
@@ -451,6 +491,7 @@ async function startFileImport(file) {
     fd.append('aiMessages', String($('aiMessages').checked));
     fd.append('rescrape', String($('rescrape').checked));
     fd.append('products', selectedProducts().join(','));
+    fd.append('productContext', JSON.stringify(productContext()));
     const res = await fetch('/api/scrape/import', { method: 'POST', body: fd });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || res.statusText);
@@ -798,7 +839,15 @@ window.addEventListener('hashchange', () => {
 
 $('autoSend')?.addEventListener('change', syncAutoSendUi);
 $('aiMessages').addEventListener('change', syncAiUi);
-document.querySelectorAll('.product-check').forEach((el) => el.addEventListener('change', updateRunSummary));
+document.querySelectorAll('.product-check').forEach((el) =>
+  el.addEventListener('change', () => {
+    syncBriefs();
+    updateRunSummary();
+  })
+);
+document.querySelectorAll('.product-brief').forEach((el) => el.addEventListener('input', saveBriefs));
+loadBriefs();
+syncBriefs();
 document.querySelectorAll('.seg').forEach((b) => b.addEventListener('click', () => setSourceMode(b.dataset.source)));
 $('verboseLogs').addEventListener('change', () => renderJob(lastStatus?.scrapeJob));
 
